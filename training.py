@@ -1,7 +1,7 @@
 import tensorflow as tf
 from models.ConstraintAutoRec import ConstraintAutoRec
 import datetime
-
+import os
 
 
 movie_lens = {
@@ -24,8 +24,15 @@ def load_dataset(ds: dict):
 
     return tf.data.TFRecordDataset(ds['filenames']).map(parse_example)
 
-today = datetime.date.today()
+
+
+
 model = ConstraintAutoRec(movie_lens['dimensions'])
 model.train(load_dataset(movie_lens), movie_lens['records'])
-model.save('saved/' + str(today) + '/')
+
+today = datetime.date.today()
+directory = 'saved_models/' + str(today) + '/'
+if not os.path.exists(directory):
+    os.makedirs(directory)
+model.save(directory)
 
