@@ -2,9 +2,8 @@ from abc import abstractmethod
 import tensorflow as tf
 
 class BaseModel:
-    def __init__(self, nr_users, nr_items, **kwargs):
-        self.nr_users = nr_users
-        self.nr_items = nr_items
+    def __init__(self, dimensions, **kwargs):
+        self.dimensions = dimensions
         self.args = kwargs
 
 

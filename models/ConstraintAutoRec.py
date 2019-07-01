@@ -6,15 +6,17 @@ from tensorflow.keras import Model, backend as K
 
 class ConstraintAutoRec(BaseModel):
 
-    def __init__(self, nr_users, nr_items, **kwargs):
-        super().__init__(nr_users, nr_items, **kwargs)
-        self.prepare_model()
-        self.latent_dims = kwargs.get('latent_dim', 64)
-        self.input_dim = nr_items
+    def __init__(self, dimensions, **kwargs):
+        super().__init__(dimensions, **kwargs)
+        self.latent_dims = kwargs.get('latent_dim', 128)
+        self.input_dim = dimensions
         self.accuracy_weight = kwargs.get('accuracy_weight', 1.0)
-        self.novelty_weight = kwargs.get('novelty_weight', 0.5)
-        self.diversity_weight = kwargs.get('diversity_weight', 0.5)
+        self.novelty_weight = kwargs.get('novelty_weight', 0.1)
+        self.diversity_weight = kwargs.get('diversity_weight', 0.1)
         self.epochs = kwargs.get('epochs', 20)
+        self.batch_size = kwargs.get('batch_size', 32)
+
+        self.prepare_model()
 
     def prepare_model(self):
         rating = Input(shape=(self.input_dim,))
@@ -37,7 +39,7 @@ class ConstraintAutoRec(BaseModel):
         # decoder.summary()
 
         def constraint_loss(y_true, y_pred):
-            self.augmented_loss(y_true, y_pred, mask, rating_noisy)
+            return self.augmented_loss(y_true, y_pred, mask, rating_noisy)
 
         self.model = Model(inputs=[rating, mask, rating_noisy], outputs=self.decoder(self.encoder(rating_noisy)),
                            name='ConstraintAutoRec')
@@ -53,28 +55,25 @@ class ConstraintAutoRec(BaseModel):
 
 
     @staticmethod
-    def prepare_train_data(record):
+    def prepare_train_data(ratings, mask):
         noise = 0.2
-        ratings = record[0]
-        flips = (tf.random.uniform(record.shape) > noise)
-        noisy_ratings = ratings * flips
-        # TODO test if this works
-        return (record[0], record[1], noisy_ratings), record[0]
+        flips = (tf.random.uniform(tf.shape(ratings)) > noise)
+        noisy_ratings = ratings & flips
+        return (ratings, mask, noisy_ratings), ratings
 
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
         dataset = dataset.map(self.prepare_train_data)
-        dataset = dataset.batch(32)
+        dataset = dataset.batch(self.batch_size)
         dataset = dataset.repeat()
-        dataset = dataset.shuffle(1000)
-        self.model.fit(dataset, epochs=20, steps_per_epoch=19)
-        pass
+        dataset = dataset.shuffle(2048)
+        self.model.fit(dataset, epochs=self.epochs, steps_per_epoch=nr_records//self.batch_size)
 
     def save(self, path):
-        pass
+        self.model.save(path + '/constraint_auto_rec.h5')
 
     def load(self, path):
-        pass
+        self.model = tf.keras.models.load_model(path)
 
     def test(self, input_data):
         pass
