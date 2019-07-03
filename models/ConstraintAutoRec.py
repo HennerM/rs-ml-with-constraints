@@ -2,6 +2,7 @@ from models.BaseModel import BaseModel
 import tensorflow as tf
 from tensorflow.keras.layers import Input, Dense, Flatten, Conv2D, Reshape, Conv2DTranspose, Activation
 from tensorflow.keras import Model, backend as K
+import numpy as np
 
 
 class ConstraintAutoRec(BaseModel):
@@ -75,5 +76,5 @@ class ConstraintAutoRec(BaseModel):
     def load(self, path):
         self.model = tf.keras.models.load_model(path)
 
-    def test(self, input_data):
+    def test(self, data: np.ndarray) -> np.ndarray:
         pass

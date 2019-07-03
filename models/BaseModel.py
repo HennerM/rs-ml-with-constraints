@@ -1,5 +1,6 @@
 from abc import abstractmethod
 import tensorflow as tf
+import numpy as np
 
 class BaseModel:
     def __init__(self, dimensions, **kwargs):
@@ -20,9 +21,11 @@ class BaseModel:
         pass
 
     @abstractmethod
-    def test(self, input_data):
+    def predict(self, data: np.ndarray) -> np.ndarray:
         pass
 
 
-    def recommend(self, input_data):
+    @abstractmethod
+    def recommend(self, input_data) -> dict:
+        # predictions =
         pass
