@@ -46,7 +46,7 @@ def evaluate(model: BaseModel, dataset: dict):
     print("Recall:", calculate_recall(predictions, y, mask))
     print("MSE", calculate_MSE(predictions, y, with_held))
 
-    return predictions
+    return predictions, y
 
 
 if __name__ == "__main__":

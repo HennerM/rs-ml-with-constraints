@@ -18,6 +18,7 @@ movie_lens = {
         'records': 610,
         'filename': (os.path.dirname(__file__) + '/../../Data/MovieLens/test.npz')
     },
+    'item_features': os.path.dirname(__file__) + '/../../Data/MovieLens/movie_features.npz',
     'dimensions': 9018,
 }
 
