@@ -4,26 +4,25 @@ import pandas as pd
 import numpy as np
 import os
 
-
-
 def load_data(ratings_csv, movies_csv):
 
     ratings = pd.read_csv(ratings_csv)
     movies = pd.read_csv(movies_csv)
-    movies['mId'] = movies.index
+    nr_items = movies.count()[0]
     ratings = ratings.join(movies, on='movieId', rsuffix='_movies')
-    return ratings
+    return ratings, nr_items
 
 
-def create_rating_matrix(ratings):
-    nr_users = int(max(ratings['userId']))
-    nr_movies = int(max(ratings['mId']))
-    rating_matrix = np.zeros((nr_users, nr_movies))
-    rating_mask = np.zeros((nr_users, nr_movies), dtype=int)
-    for index, row in ratings.iterrows():
-        if row['mId'] < nr_movies and row['userId'] < nr_movies:
-            rating_matrix[int(row['userId']) - 1, int(row['mId']) - 1] = row['rating']
-            rating_mask[int(row['userId']) - 1, int(row['mId']) - 1] = 1
+def create_rating_matrix(ratings, dimensions):
+    nr_users = int(ratings['userId'].max())
+    print("Nr users:", nr_users)
+    print("Nr dimensions:", dimensions)
+    rating_matrix = np.zeros((nr_users, dimensions))
+    rating_mask = np.zeros((nr_users, dimensions), dtype=int)
+    for row in ratings.itertuples():
+        if row.mId < dimensions and row.userId < nr_users:
+            rating_matrix[int(row.userId) - 1, int(row.mId)] = row.rating
+            rating_mask[int(row.userId) - 1, int(row.mId)] = 1
     return rating_matrix, rating_mask
 
 
@@ -90,6 +89,9 @@ def serialize_example(x, y, mask, hold_back = None):
         'mask': _int64_feature(mask.nonzero()[0]),
     }
 
+    if hold_back is not None:
+        feature['held_back']: _int64_feature(hold_back)
+
     example_proto = tf.train.Example(features=tf.train.Features(feature=feature))
     return example_proto.SerializeToString()
 
@@ -98,11 +100,17 @@ def save_to_records(x, mask, y, filename):
     for i in range(x.shape[0]):
         writer.write(serialize_example(x[i], mask[i], y[i]))
 
+def save_test_to_records(x, mask, y, held_back, filename):
+    writer = tf.io.TFRecordWriter(filename)
+    for i in range(x.shape[0]):
+        writer.write(serialize_example(x[i], mask[i], y[i], held_back[i]))
 
 if __name__ == "__main__":
-    ratings = load_data('../../Data/MovieLens/ml-latest-small/ratings.csv', '../../Data/MovieLens/ml-latest-small/movies.csv')
+    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
+    print("Nr of ratings:", ratings['rating'].count())
+    y, mask = create_rating_matrix(ratings, dimensions)
+    print("Shape of rating matrix:", y.shape)
 
-    y, mask = create_rating_matrix(ratings)
     y = convert_to_implicit(y)
     mask = augment_unobserved(mask)
     x, held_back = hold_back_ratings(y, mask)
@@ -111,16 +119,20 @@ if __name__ == "__main__":
     train_x = x[train_indices]
     train_y = y[train_indices]
     train_mask = mask[train_indices]
+    print("Shape of train matrix:", train_x.shape)
 
     validate_x = x[validation_indices]
     validate_y = y[validation_indices]
     validate_mask = mask[validation_indices]
+    print("Shape of validation matrix:", validate_x.shape)
 
     test_x = x[test_indices]
     test_y = y[test_indices]
     test_mask = mask[test_indices]
+    print("Shape of test matrix:", test_x.shape)
 
-    save_to_records(train_x, train_mask, train_y, os.path.abspath('../../Data/MovieLens/train.tfrecords'))
-    save_to_records(validate_x, validate_mask, validate_y, os.path.abspath('../../Data/MovieLens/validation.tfrecords'))
+    save_to_records(train_x, train_mask, train_y, os.path.dirname(__file__) + '../../Data/MovieLens/train.tfrecords')
+    save_to_records(validate_x, validate_mask, validate_y, os.path.dirname(__file__) + '../../Data/MovieLens/validate.tfrecords')
 
-    np.savez(os.path.abspath('../../Data/MovieLens/test.npz'), x=test_x, y=test_y, mask=test_mask, held_back=held_back)
+    save_test_to_records(test_x, test_mask, test_y, held_back, os.path.dirname(__file__) + '../../Data/MovieLens/test.tfrecords')
+    # np.savez(os.path.abspath('../../Data/MovieLens/test.npz'), x=test_x, y=test_y, mask=test_mask, held_back=held_back)

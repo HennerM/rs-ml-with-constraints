@@ -3,15 +3,17 @@ import pandas as pd
 import numpy as np
 import os
 
-def load_data(genome_csv, tags_csv, movies_csv):
+def load_data(genome_csv, tags_csv, movies_csv, genome_relevance_csv):
     genome_tags = pd.read_csv(genome_csv)
     tags = pd.read_csv(tags_csv)
     movies= pd.read_csv(movies_csv)
     movies['mId'] = movies.index
+    genome_relevance = pd.read_csv(genome_relevance_csv)
 
+    genome_relevance['tagId'] = genome_relevance['tagId'] - 1
     genome_tags['tagId'] = genome_tags['tagId'] - 1
 
-    return tags, genome_tags, movies
+    return tags, genome_tags, movies, genome_relevance
 
 def merge_data(tags, genome_tags, movies):
     return tags.merge(genome_tags, on='tag', how='inner').merge(movies, on='movieId', how='inner')
@@ -21,22 +23,33 @@ def count_and_normalize(merged):
     max_count = tags_group.to_frame().groupby(['mId']).max()['userId']
     return tags_group / max_count
 
+def create_movie_id_mapping(movies, genome_relevance) -> pd.DataFrame:
+    movie_mapping = pd.merge(movies, genome_relevance, on='movieId', how='inner')
+    movie_mapping = movie_mapping.groupby('movieId')['tagId'].count().reset_index()
+    movie_mapping['mId'] = movie_mapping.index
+    return movie_mapping[["movieId","mId"]]
+
+
 if __name__ == "__main__":
 
     genome_csv = os.path.abspath(__file__ + '/../../../Data/MovieLens/ml-20m/genome-tags.csv')
     tags_csv = os.path.abspath(__file__ + '/../../../Data/MovieLens/ml-20m/tags.csv')
-    movies_csv = os.path.abspath(__file__ + '/../../../Data/MovieLens/ml-latest-small/movies.csv')
-    tags, genome_tags, movies = load_data(genome_csv, tags_csv, movies_csv)
+    movies_csv = os.path.abspath(__file__ + '/../../../Data/MovieLens/ml-20m/movies.csv')
+    genome_relevance_csv = os.path.abspath(__file__ + '/../../../Data/MovieLens/ml-20m/genome-scores.csv')
+    tags, genome_tags, movies, relevance = load_data(genome_csv, tags_csv, movies_csv, genome_relevance_csv)
 
-    feature_series = count_and_normalize(merge_data(tags, genome_tags, movies))
-    nr_tags = genome_tags['tagId'].max() + 1
-    nr_movies = movies['movieId'].count()
-    print(nr_movies, nr_tags)
 
-    movie_features = np.zeros([nr_movies, nr_tags])
-    for index, value in feature_series.items():
-        # print(index, value)
-        movie_features[index] = value
+    # nr_tags = genome_tags['tagId'].count()
+    movie_mapping = create_movie_id_mapping(movies, relevance)
+    movie_mapping.to_csv(os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv', index=False)
+    # nr_movies = movie_mapping['mId'].count()
+
+    relevance_movies = relevance.merge(movie_mapping, on='movieId', how='inner')
+
+
+    movie_features = pd.pivot_table(relevance_movies, values='relevance', index='mId', columns='tagId').to_numpy()
+    print("Features shape:", movie_features.shape)
+
 
     np.savez(os.path.abspath(__file__ + '/../../../Data/MovieLens/movie_features.npz'), movie_features)
 
