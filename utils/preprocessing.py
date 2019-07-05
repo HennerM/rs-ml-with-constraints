@@ -90,7 +90,7 @@ def serialize_example(x, y, mask, hold_back = None):
     }
 
     if hold_back is not None:
-        feature['held_back']: _int64_feature(hold_back)
+        feature['held_back'] = _int64_feature(hold_back)
 
     example_proto = tf.train.Example(features=tf.train.Features(feature=feature))
     return example_proto.SerializeToString()
@@ -103,6 +103,7 @@ def save_to_records(x, mask, y, filename):
 def save_test_to_records(x, mask, y, held_back, filename):
     writer = tf.io.TFRecordWriter(filename)
     for i in range(x.shape[0]):
+
         writer.write(serialize_example(x[i], mask[i], y[i], held_back[i]))
 
 if __name__ == "__main__":
@@ -129,10 +130,11 @@ if __name__ == "__main__":
     test_x = x[test_indices]
     test_y = y[test_indices]
     test_mask = mask[test_indices]
+    test_held_back = held_back[test_indices]
     print("Shape of test matrix:", test_x.shape)
 
     save_to_records(train_x, train_mask, train_y, os.path.dirname(__file__) + '../../Data/MovieLens/train.tfrecords')
     save_to_records(validate_x, validate_mask, validate_y, os.path.dirname(__file__) + '../../Data/MovieLens/validate.tfrecords')
 
-    save_test_to_records(test_x, test_mask, test_y, held_back, os.path.dirname(__file__) + '../../Data/MovieLens/test.tfrecords')
+    save_test_to_records(test_x, test_mask, test_y, test_held_back, os.path.dirname(__file__) + '../../Data/MovieLens/test.tfrecords')
     # np.savez(os.path.abspath('../../Data/MovieLens/test.npz'), x=test_x, y=test_y, mask=test_mask, held_back=held_back)
