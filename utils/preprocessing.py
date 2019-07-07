@@ -17,12 +17,12 @@ def create_rating_matrix(ratings, dimensions):
     nr_users = int(ratings['userId'].max())
     print("Nr users:", nr_users)
     print("Nr dimensions:", dimensions)
-    rating_matrix = np.zeros((nr_users, dimensions))
-    rating_mask = np.zeros((nr_users, dimensions), dtype=int)
+    rating_matrix = np.zeros((nr_users, dimensions), dtype=np.bool)
+    rating_mask = np.zeros((nr_users, dimensions), dtype=np.bool)
     for row in ratings.itertuples():
         if row.mId < dimensions and row.userId < nr_users:
-            rating_matrix[int(row.userId) - 1, int(row.mId)] = row.rating
-            rating_mask[int(row.userId) - 1, int(row.mId)] = 1
+            rating_matrix[int(row.userId) - 1, int(row.mId)] = convert_to_implicit(row.rating)
+            rating_mask[int(row.userId) - 1, int(row.mId)] = True
     return rating_matrix, rating_mask
 
 
@@ -107,12 +107,11 @@ def save_test_to_records(x, mask, y, held_back, filename):
         writer.write(serialize_example(x[i], mask[i], y[i], held_back[i]))
 
 if __name__ == "__main__":
-    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
+    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
     print("Nr of ratings:", ratings['rating'].count())
     y, mask = create_rating_matrix(ratings, dimensions)
     print("Shape of rating matrix:", y.shape)
 
-    y = convert_to_implicit(y)
     mask = augment_unobserved(mask)
     x, held_back = hold_back_ratings(y, mask)
     train_indices, validation_indices, test_indices = split_train_test_validate(x.shape[0])
@@ -133,8 +132,6 @@ if __name__ == "__main__":
     test_held_back = held_back[test_indices]
     print("Shape of test matrix:", test_x.shape)
 
-    save_to_records(train_x, train_mask, train_y, os.path.dirname(__file__) + '../../Data/MovieLens/train.tfrecords')
-    save_to_records(validate_x, validate_mask, validate_y, os.path.dirname(__file__) + '../../Data/MovieLens/validate.tfrecords')
-
-    save_test_to_records(test_x, test_mask, test_y, test_held_back, os.path.dirname(__file__) + '../../Data/MovieLens/test.tfrecords')
-    # np.savez(os.path.abspath('../../Data/MovieLens/test.npz'), x=test_x, y=test_y, mask=test_mask, held_back=held_back)
+    save_to_records(train_x, train_mask, train_y, os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/train.tfrecords')
+    save_to_records(validate_x, validate_mask, validate_y, os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/validate.tfrecords')
+    save_test_to_records(test_x, test_mask, test_y, test_held_back, os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/test.tfrecords')
