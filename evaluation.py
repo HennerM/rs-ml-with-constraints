@@ -126,7 +126,7 @@ def evaluate(model: BaseModel, dataset: dict):
         metrics['epc@5'] += expected_popularity_complement(top_5, known_frequencies).mean()
         metrics['epc@10'] += expected_popularity_complement(top_10, known_frequencies).mean()
 
-        # metrics['epd@5'] =+ expected_profile_distance(top_5, y, item_features).mean()
+        metrics['epd@5'] =+ expected_profile_distance(top_5, y, item_features).mean()
 
         nr_batches += 1
 
