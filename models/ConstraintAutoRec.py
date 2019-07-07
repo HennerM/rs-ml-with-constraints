@@ -86,4 +86,4 @@ class ConstraintAutoRec(BaseModel):
 
     def get_params(self) -> dict:
         param_names = ['dimensions', 'latent_dims', 'accuracy_weight', 'novelty_weight', 'diversity_weight', 'epochs', 'batch_size', 'optimizer']
-        return  {param: (self.__dict__['param']) for param in param_names}
+        return  {param: (self.__dict__[param]) for param in param_names}

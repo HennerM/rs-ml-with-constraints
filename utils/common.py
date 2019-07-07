@@ -12,12 +12,12 @@ movie_lens = {
         'held_back': tf.io.VarLenFeature(tf.int64),
     },
     'train': {
-        'records': 610,
-        'filenames': [os.path.dirname(__file__) + '/../../Data/MovieLens/train.tfrecords']
+        'records': 3000,
+        'filenames': [os.path.dirname(__file__) + '/../../Data/MovieLens/ml-20m/train.tfrecords']
     },
     'test': {
-        'records': 610,
-        'filename': (os.path.dirname(__file__) + '/../../Data/MovieLens/test.tfrecords')
+        'records': 13850,
+        'filename': (os.path.dirname(__file__) + '/../../Data/MovieLens/ml-20m/test.tfrecords')
     },
     'item_features': os.path.dirname(__file__) + '/../../Data/MovieLens/movie_features.npz',
 
