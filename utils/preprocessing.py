@@ -9,7 +9,7 @@ def load_data(ratings_csv, movies_csv):
     ratings = pd.read_csv(ratings_csv)
     movies = pd.read_csv(movies_csv)
     nr_items = movies.count()[0]
-    ratings = ratings.join(movies, on='movieId', rsuffix='_movies')
+    ratings = ratings.merge(movies, on='movieId',how='inner')
     return ratings, nr_items
 
 

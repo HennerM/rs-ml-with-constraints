@@ -20,6 +20,7 @@ movie_lens = {
         'filename': (os.path.dirname(__file__) + '/../../Data/MovieLens/test.tfrecords')
     },
     'item_features': os.path.dirname(__file__) + '/../../Data/MovieLens/movie_features.npz',
+
     'dimensions': 10381,
 }
 

@@ -1,3 +1,5 @@
+import math
+
 from models import BaseModel
 from models.ConstraintAutoRec import ConstraintAutoRec
 from utils.common import movie_lens, load_dataset, load_testset
@@ -34,8 +36,70 @@ def calculate_recall(predictions, actual, mask):
     fn = ((~pred) * actual * mask).sum()
     return tp / (tp + fn)
 
+def cosine_similarity(u, v):
+    if np.linalg.norm(u) == 0 or np.linalg.norm(v) == 0:
+        return 0
+    return np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
+
+def recommend_top_n(predictions, n):
+    sorted = np.flip(np.argsort(predictions, axis=1), axis=1)
+    return sorted[:, 0:n]
+
+
+
+def calc_diversity_with_features(item_features):
+    def calc_diversity(items):
+        n = len(items)
+        running_sum = 0
+        for i in range(n):
+            for j in range(i + 1, n):
+                running_sum += 1 - cosine_similarity(item_features[items[i]], item_features[items[j]])
+
+        return running_sum / ((n-1) * (n/2))
+    return calc_diversity
+
+def diversity_for_list(recs, item_features):
+    return np.apply_along_axis(calc_diversity_with_features(item_features), 1, recs)
+
+
+def disc(k):
+    return 1 / math.log2(k + 1)
+
+def expected_popularity_complement(recommendations, known_frequencies):
+    def epc(recs):
+        running_sum = 0
+        for i in range(len(recs)):
+            running_sum += disc(i + 1) * (1 - known_frequencies[recs[i]])
+
+        normalizing = 0
+        for i in range(len(recs)):
+            normalizing += disc(i + 1)
+
+        return running_sum / normalizing
+    return np.apply_along_axis(epc, 1, recommendations)
+
+def expected_profile_distance(recommendations, actual, item_features):
+    nr_users = recommendations.shape[0]
+    nr_recs = recommendations.shape[1]
+    epd_values = np.zeros(nr_users)
+
+    for u in range(nr_users):
+        item_set = actual[u].nonzero()[0]
+        running_sum = 0
+        for i in range(nr_recs):
+            for j in range(len(item_set)):
+                running_sum += 1 - cosine_similarity(item_features[recommendations[u, i]], item_features[item_set[j]])
+        epd_values[u] = running_sum / (nr_recs * len(item_set))
+
+
+    return epd_values
+
 
 def evaluate(model: BaseModel, dataset: dict):
+
+    loaded_features = np.load(dataset['item_features'], allow_pickle=True)
+    item_features = loaded_features['features']
+    known_frequencies = loaded_features['known_frequency']
 
     dataset = load_testset(dataset).batch(64)
     for batch in dataset:
@@ -49,6 +113,13 @@ def evaluate(model: BaseModel, dataset: dict):
         print("Precision:", calculate_precision(predictions, y, mask))
         print("Recall:", calculate_recall(predictions, y, mask))
         print("MSE", calculate_MSE(predictions, y, with_held))
+
+        top_5 = recommend_top_n(predictions, 5)
+        top_10 = recommend_top_n(predictions, 10)
+        print("Diversity@5", diversity_for_list(top_5, item_features).mean())
+        print("Diversity@10", diversity_for_list(top_10, item_features).mean())
+        print("EPC@10", expected_popularity_complement(top_10, known_frequencies).mean())
+        print("EPD@10", expected_profile_distance(top_10, y, item_features).mean())
 
     return predictions, y
 

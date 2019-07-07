@@ -74,5 +74,5 @@ class ConstraintAutoRec(BaseModel):
         self.model = tf.keras.models.load_model(path)
 
     def predict(self, data: np.ndarray) -> np.ndarray:
-        mask_dummy = np.zeros(data.shape)
+        mask_dummy = np.ones(data.shape)
         return self.model.predict((data, mask_dummy))
