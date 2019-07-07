@@ -24,8 +24,9 @@ class BaseModel:
     def predict(self, data: np.ndarray) -> np.ndarray:
         pass
 
-
     @abstractmethod
-    def recommend(self, input_data) -> dict:
-        # predictions =
+    def get_name(self) -> str:
+        pass
+
+    def get_params(self) -> dict:
         pass

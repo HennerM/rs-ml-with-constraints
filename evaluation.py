@@ -1,9 +1,11 @@
 import math
+from typing import List
 
 from models import BaseModel
 from models.ConstraintAutoRec import ConstraintAutoRec
 from utils.common import movie_lens, load_dataset, load_testset
 import numpy as np
+import pandas as pd
 
 def calculate_MSE(predictions, actual, with_held):
     error = np.square(predictions - actual)
@@ -63,19 +65,14 @@ def diversity_for_list(recs, item_features):
 
 
 def disc(k):
-    return 1 / math.log2(k + 1)
+    return 1 / np.log2(k + 1)
 
 def expected_popularity_complement(recommendations, known_frequencies):
     def epc(recs):
-        running_sum = 0
-        for i in range(len(recs)):
-            running_sum += disc(i + 1) * (1 - known_frequencies[recs[i]])
+        discounts = disc(np.arange(1, len(recs) + 1))
+        freqs = 1 - known_frequencies[recs]
+        return np.sum(discounts * freqs.T) / np.sum(discounts)
 
-        normalizing = 0
-        for i in range(len(recs)):
-            normalizing += disc(i + 1)
-
-        return running_sum / normalizing
     return np.apply_along_axis(epc, 1, recommendations)
 
 def expected_profile_distance(recommendations, actual, item_features):
@@ -101,7 +98,13 @@ def evaluate(model: BaseModel, dataset: dict):
     item_features = loaded_features['features']
     known_frequencies = loaded_features['known_frequency']
 
-    dataset = load_testset(dataset).batch(64)
+    dataset = load_testset(dataset).batch(32)
+
+    metrics = dict()
+    for m in ['accuracy', 'precision', 'recall', 'mse', 'diversity@5', 'diversity@10', 'epc@5', 'epc@10', 'epd@5']:
+        metrics[m] = 0
+    nr_batches = 0
+
     for batch in dataset:
         x = batch['x'].numpy()
         y = batch['y'].numpy()
@@ -109,19 +112,36 @@ def evaluate(model: BaseModel, dataset: dict):
         with_held = batch['held_back'].numpy()
 
         predictions = model.predict(x)
-        print("Accuracy:", calculate_accuracy(predictions, y, mask))
-        print("Precision:", calculate_precision(predictions, y, mask))
-        print("Recall:", calculate_recall(predictions, y, mask))
-        print("MSE", calculate_MSE(predictions, y, with_held))
-
         top_5 = recommend_top_n(predictions, 5)
         top_10 = recommend_top_n(predictions, 10)
-        print("Diversity@5", diversity_for_list(top_5, item_features).mean())
-        print("Diversity@10", diversity_for_list(top_10, item_features).mean())
-        print("EPC@10", expected_popularity_complement(top_10, known_frequencies).mean())
-        print("EPD@10", expected_profile_distance(top_10, y, item_features).mean())
 
-    return predictions, y
+        metrics['accuracy'] += calculate_accuracy(predictions, y, mask)
+        metrics['precision'] += calculate_precision(predictions, y, mask)
+        metrics['recall'] += calculate_recall(predictions, y, mask)
+        metrics['mse'] += calculate_MSE(predictions, y, with_held)
+
+        metrics['diversity@5'] = +diversity_for_list(top_5, item_features).mean()
+        metrics['diversity@10'] += diversity_for_list(top_10, item_features).mean()
+
+        metrics['epc@5'] += expected_popularity_complement(top_5, known_frequencies).mean()
+        metrics['epc@10'] += expected_popularity_complement(top_10, known_frequencies).mean()
+
+        # metrics['epd@5'] =+ expected_profile_distance(top_5, y, item_features).mean()
+
+        nr_batches += 1
+
+    metrics = {key: (v / nr_batches) for (key, v) in metrics.items()}
+
+    metrics['name'] = model.get_name()
+    for k, v in model.get_params().items():
+        metrics[k] = v
+
+    return metrics
+
+def evaluate_models(model: list, dataset: dict):
+    values = [evaluate(m, dataset) for m in model]
+    return pd.DataFrame(values)
+
 
 
 if __name__ == "__main__":

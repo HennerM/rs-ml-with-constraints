@@ -16,6 +16,10 @@ class ConstraintAutoRec(BaseModel):
         self.diversity_weight = kwargs.get('diversity_weight', 0.1)
         self.epochs = kwargs.get('epochs', 20)
         self.batch_size = kwargs.get('batch_size', 32)
+        self.name = kwargs.get('name', 'ConstraintAutoRec')
+        self.optimizer = kwargs.get('optimizer', 'adam')
+
+        self.params = kwargs
 
         self.prepare_model()
 
@@ -45,7 +49,7 @@ class ConstraintAutoRec(BaseModel):
 
         self.model = Model(inputs=[rating, mask], outputs=self.decoder(self.encoder(rating)),
                            name='ConstraintAutoRec')
-        self.model.compile(optimizer='adam', loss=constraint_loss, metrics=['accuracy'])
+        self.model.compile(optimizer=self.optimizer, loss=constraint_loss, metrics=['accuracy'])
 
 
     def augmented_loss(self, y_true, y_pred, mask, x_noisy):
@@ -76,3 +80,10 @@ class ConstraintAutoRec(BaseModel):
     def predict(self, data: np.ndarray) -> np.ndarray:
         mask_dummy = np.ones(data.shape)
         return self.model.predict((data, mask_dummy))
+
+    def get_name(self) -> str:
+        return self.name
+
+    def get_params(self) -> dict:
+        param_names = ['dimensions', 'latent_dims', 'accuracy_weight', 'novelty_weight', 'diversity_weight', 'epochs', 'batch_size', 'optimizer']
+        return  {param: (self.__dict__['param']) for param in param_names}
