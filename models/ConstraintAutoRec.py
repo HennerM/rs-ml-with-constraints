@@ -68,20 +68,18 @@ class ConstraintAutoRec(BaseModel):
     # TODO test if still works
     @staticmethod
     def transform_example(example) -> Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
-        actual = example['y']
-        positive = tf.where(tf.math.equal(actual, True))
-        sample = tf.math.less(tf.random.uniform(positive.shape), 0.3)
-        indices = positive[sample].numpy()
-        mask = np.full(y.shape, False)
-        mask[indices] = True
-        mask = tf.convert_to_tensor(mask)
-        noisy = tf.where(mask, False, actual)
+        actual = example['x']
+        # positive = tf.where(tf.math.equal(actual, True))
+        sample = tf.math.less(tf.random.uniform(tf.shape(actual)), 0.3)
+        # indices = positive[sample]
+        # mask = tf.greater(tf.math.reduce_sum(tf.one_hot(indices, actual.shape[0],on_value=1, off_value=0), axis=0), 0)
+        noisy = tf.where(sample, False, actual)
         return (noisy, example['mask']), actual
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
-        dataset = dataset.map(self.transform_example).batch(self.batch_size)
+        dataset = dataset.batch(self.batch_size).map(self.transform_example)
         dataset = dataset.repeat()
-        dataset = dataset.shuffle(2048)
+        dataset = dataset.shuffle(1000)
         self.model.fit(dataset, epochs=self.epochs, steps_per_epoch=nr_records//self.batch_size)
 
     def save(self, path):
@@ -90,7 +88,7 @@ class ConstraintAutoRec(BaseModel):
     def load(self, path):
         self.model = tf.keras.models.load_model(path)
 
-    def predict(self, data: np.ndarray) -> np.ndarray:
+    def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         mask_dummy = np.ones(data.shape)
         return self.model.predict((data, mask_dummy))
 
