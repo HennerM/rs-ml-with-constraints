@@ -6,7 +6,7 @@ from typing import List
 
 from models import BaseModel
 from models.ConstraintAutoRec import ConstraintAutoRec
-from utils.common import movie_lens, load_dataset, load_testset
+from utils.common import movie_lens, load_dataset
 import numpy as np
 import pandas as pd
 import time
@@ -24,14 +24,10 @@ class Evaluation:
         self.known_frequencies = loaded_features['known_frequency']
 
     @staticmethod
-    def calculate_MSE(predictions, actual, with_held):
-        error = np.square(predictions - actual)
-        total_error = 0
-        for i in range(error.shape[0]):
-            with_held_items = with_held[i].nonzero()[0]
-            total_error += error[i, with_held_items].mean()
-
-        return total_error / float(error.shape[0])
+    def calculate_MSE(predictions, actual, mask):
+        nr_ratings = len(mask.nonzero()[0])
+        error = np.sum(np.square(predictions - actual) * mask)
+        return error / nr_ratings
 
     @staticmethod
     def calculate_accuracy(predictions, actual, mask):
@@ -116,14 +112,13 @@ class Evaluation:
 
 
     def calc_batch_metrics(self, model, batch):
-        x = batch['x'].numpy()
-        y = batch['y'].numpy()
+        y = batch['x'].numpy()
         mask = batch['mask'].numpy()
-        with_held = batch['held_back'].numpy()
+        user_ids = batch['user_id']
 
         batch_start = time.time()
 
-        predictions = model.predict(x)
+        predictions = model.predict(y, user_ids)
         top_5 = Evaluation.recommend_top_n(predictions, 5)
         top_10 = Evaluation.recommend_top_n(predictions, 10)
 
@@ -131,7 +126,7 @@ class Evaluation:
         metrics['accuracy'] = Evaluation.calculate_accuracy(predictions, y, mask)
         metrics['precision'] = Evaluation.calculate_precision(predictions, y, mask)
         metrics['recall'] = Evaluation.calculate_recall(predictions, y, mask)
-        metrics['mse'] = Evaluation.calculate_MSE(predictions, y, with_held)
+        metrics['mse'] = Evaluation.calculate_MSE(predictions, y, mask)
         metrics['diversity@5'] = self.diversity_for_list(top_5).mean()
         metrics['diversity@10'] = self.diversity_for_list(top_10).mean()
         metrics['epc@5'] = self.expected_popularity_complement(top_5).mean()
@@ -142,11 +137,8 @@ class Evaluation:
 
 
     def evaluate(self, model: BaseModel):
-        def calc_batch(batch):
-            return self.calc_batch_metrics(model, batch)
-
         nr_batches = 0
-        dataset = load_testset(self.dataset).batch(128)
+        dataset = load_dataset(self.dataset, 'test').batch(128)
 
         multiprocessing.Process()
         metrics = dict()

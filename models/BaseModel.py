@@ -21,12 +21,13 @@ class BaseModel:
         pass
 
     @abstractmethod
-    def predict(self, data: np.ndarray) -> np.ndarray:
+    def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         pass
 
     @abstractmethod
     def get_name(self) -> str:
         pass
 
+    @abstractmethod
     def get_params(self) -> dict:
         pass

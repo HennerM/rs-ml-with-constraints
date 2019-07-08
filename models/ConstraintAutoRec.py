@@ -1,3 +1,5 @@
+from typing import Tuple
+
 from models.BaseModel import BaseModel
 import tensorflow as tf
 from tensorflow.keras.layers import Input, Dense, Flatten, Conv2D, Reshape, Conv2DTranspose, Activation
@@ -63,10 +65,21 @@ class ConstraintAutoRec(BaseModel):
         return supervised_loss + novelty_constraint + diversity_constraint
 
 
-
+    # TODO test if still works
+    @staticmethod
+    def transform_example(example) -> Tuple[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray]]:
+        actual = example['y']
+        positive = tf.where(tf.math.equal(actual, True))
+        sample = tf.math.less(tf.random.uniform(positive.shape), 0.3)
+        indices = positive[sample].numpy()
+        mask = np.full(y.shape, False)
+        mask[indices] = True
+        mask = tf.convert_to_tensor(mask)
+        noisy = tf.where(mask, False, actual)
+        return (noisy, example['mask']), actual
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
-        dataset = dataset.batch(self.batch_size)
+        dataset = dataset.map(self.transform_example).batch(self.batch_size)
         dataset = dataset.repeat()
         dataset = dataset.shuffle(2048)
         self.model.fit(dataset, epochs=self.epochs, steps_per_epoch=nr_records//self.batch_size)
