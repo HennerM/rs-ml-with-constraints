@@ -149,7 +149,7 @@ def save_test_to_records(x, mask, y, held_back, filename):
         writer.write(serialize_example(x[i], mask[i], y[i], held_back[i]))
 
 if __name__ == "__main__":
-    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
+    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
     ratings['userId'] -= 1
     print("Nr of ratings:", ratings['rating'].count())
     nr_items = ratings['mId'].max() + 1
@@ -178,5 +178,5 @@ if __name__ == "__main__":
     test_data = test_data.loc[test_data.positive_test.apply(lambda x: len(x) > 0)]
 
 
-    save_df_to_records(train_data, os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/train.tfrecords')
-    save_df_to_records(test_data, os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/test.tfrecords')
+    save_df_to_records(train_data, os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/train.tfrecords')
+    save_df_to_records(test_data, os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/test.tfrecords')

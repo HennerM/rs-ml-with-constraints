@@ -5,7 +5,7 @@ from typing import List
 
 from models import BaseModel
 from models.ConstraintAutoRec import ConstraintAutoRec
-from utils.common import movie_lens, load_dataset
+from utils.common import movie_lens, load_dataset, printProgressBar
 import numpy as np
 import pandas as pd
 import time
@@ -35,7 +35,6 @@ class Evaluation:
         pred = predictions > 0.5
         tp = (pred * actual * mask).sum()
         tn = ((~pred) * (~actual) * mask).sum()
-        print(tp, tn, mask.sum())
         return (tp + tn) / mask.sum()
 
     @staticmethod
@@ -52,7 +51,6 @@ class Evaluation:
         pred = predictions > 0.5
         tp = (pred * actual * mask).sum()
         fn = ((~pred) * actual * mask).sum()
-        print(tp, fn)
         return tp / (tp + fn)
 
     @lru_cache(maxsize=4096)
@@ -165,7 +163,8 @@ class Evaluation:
 
         metrics = dict()
 
-        nr_processes = multiprocessing.cpu_count()
+
+        nr_processes = multiprocessing.cpu_count() -1
 
         input_q = multiprocessing.JoinableQueue()
         output_q = multiprocessing.JoinableQueue()
@@ -184,13 +183,14 @@ class Evaluation:
         for i in range(nr_processes):
             input_q.put(None)
 
-        i = 1
+        i = 0
         while True:
             result = output_q.get()
-            i += 1
-            printProgressBar(i, nr_batches, 'Evaluating {}'.format(model.get_name()))
             if result is None:
                 break
+            i += 1
+            printProgressBar(i, nr_batches, 'Evaluating {}'.format(model.get_name()), length=60)
+
 
             for k in result:
                 metrics.setdefault(k, 0)
@@ -198,7 +198,11 @@ class Evaluation:
             output_q.task_done()
 
         input_q.close()
+        input_q.join_thread()
         output_q.close()
+        output_q.join_thread()
+        for i in range(nr_processes):
+            processes[i].join()
 
         metrics = {key: (v / nr_batches) for (key, v) in metrics.items()}
         metrics['name'] = model.get_name()
@@ -216,6 +220,7 @@ def work_on_batch(input_queue, output_queue, evaluation):
     while True:
         data = input_queue.get()
         if data is None:
+            input_queue.task_done()
             output_queue.put(None)
             break
 
@@ -224,26 +229,6 @@ def work_on_batch(input_queue, output_queue, evaluation):
         output_queue.put(output)
         input_queue.task_done()
 
-
-def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█'):
-    """
-    Call in a loop to create terminal progress bar
-    @params:
-        iteration   - Required  : current iteration (Int)
-        total       - Required  : total iterations (Int)
-        prefix      - Optional  : prefix string (Str)
-        suffix      - Optional  : suffix string (Str)
-        decimals    - Optional  : positive number of decimals in percent complete (Int)
-        length      - Optional  : character length of bar (Int)
-        fill        - Optional  : bar fill character (Str)
-    """
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-    filledLength = int(length * iteration // total)
-    bar = fill * filledLength + '-' * (length - filledLength)
-    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\r')
-    # Print New Line on Complete
-    if iteration >= total:
-        print()
 
 if __name__ == "__main__":
     ev = Evaluation(movie_lens)

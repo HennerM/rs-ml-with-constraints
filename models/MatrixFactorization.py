@@ -2,6 +2,8 @@ import numpy as np
 import tensorflow as tf
 
 from models.BaseModel import BaseModel
+from utils.common import printProgressBar
+
 
 class MF(tf.keras.Model):
     def __init__(self, nr_users, nr_items, latent_dim):
@@ -9,17 +11,18 @@ class MF(tf.keras.Model):
 
         self.U = tf.Variable(initial_value=tf.random.truncated_normal([nr_users, latent_dim], name='latent_users'))
         self.P = tf.Variable(initial_value=tf.random.truncated_normal([latent_dim, nr_items], name='latent_items'))
+        self.regularization = 0.00001
 
-    def call(self, inputs=None):
-        return tf.matmul(self.U, self.P)
+    def call(self, user=None):
+        specific = tf.gather(self.U, user)
+        return tf.matmul(specific, self.P)
 
 
 def loss(model, targets):
-    predictions = model(None)
     user_indices = targets['user_id']
-    specific = tf.gather(predictions, user_indices)
+    predictions = model(user_indices)
     target = tf.cast(targets['x'], tf.float32)
-    return tf.reduce_mean(tf.square((specific - target) * tf.cast(targets['mask'], tf.float32)))
+    return tf.reduce_mean(tf.square((predictions - target)))
 
 def grad(model, targets):
     with tf.GradientTape() as tape:
@@ -36,23 +39,22 @@ class MatrixFactorization(BaseModel):
         self.latent_dim = kwargs.get('latent_dim', 128)
         self.epochs = kwargs.get('epochs', 10)
         self.model = MF(num_users, num_items, self.latent_dim)
-        self.batch_size = kwargs.get('batch_size', 64)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
+        self.batch_size = kwargs.get('batch_size', 128)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
 
 
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
         dataset = dataset.batch(self.batch_size)
-        dataset = dataset.shuffle(2048)
+        dataset = dataset.shuffle(1000)
+        nr_steps = nr_records // self.batch_size
         for i in range(self.epochs):
             step = 0
             for data in dataset:
                 loss_value, grads = grad(self.model, data)
                 self.optimizer.apply_gradients(zip(grads, [self.model.U, self.model.P]))
-                if step % 10 == 0:
-                    print("Epoch {} Loss at step {}: {:.3f}".format(i, step, loss_value))
+                printProgressBar(step, nr_steps, 'Epoch {}, loss:  {:.3f}'.format(i, loss_value),length=80)
                 step += 1
-
 
 
     def save(self, path):
@@ -62,11 +64,10 @@ class MatrixFactorization(BaseModel):
         pass
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
-        output = self.model(None).numpy()
-        return output[user_ids]
+        return self.model(user_ids).numpy()
 
     def get_name(self) -> str:
-        pass
+        return "MatrixFactorization"
 
     def get_params(self) -> dict:
         param_names = ['latent_dim', 'epochs', 'batch_size', ]
