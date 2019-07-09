@@ -27,7 +27,7 @@ def create_rating_matrix(ratings, dimensions):
 
 
 def convert_to_implicit(rating_matrix):
-    return rating_matrix - 3.0 >= 0
+    return rating_matrix >= 3.0
 
 
 def augment_unobserved(rating_mask, rate = 0.2):
@@ -86,14 +86,14 @@ def group_and_transform(ratings):
     ukeys, index = np.unique(user_indices, True)
     arrays = np.split(values, index[1:])
     df = pd.DataFrame({'userId': ukeys, 'rated': arrays})
-    df['positive'] = df['rated'].map(lambda x: [y[0] for y in x if y[1]])
+    df['positive'] = df['rated'].map(lambda x: [y[0] for y in x if convert_to_implicit(y[1])])
     return df
 
-def split_train_test_validate_df(ratings, train_split=0.8, validation_split=0.1):
+def split_train_test_validate_df(ratings, train_split=0.8, test_split=0.15):
     random_nrs = np.random.rand(len(ratings))
     train_indices = random_nrs < train_split
-    test_indices = (random_nrs > train_split) & (random_nrs < (train_split + validation_split))
-    validate_indices = random_nrs >  (train_split + validation_split)
+    test_indices = (random_nrs > train_split) & (random_nrs < (train_split + test_split))
+    validate_indices = random_nrs >  (train_split + test_split)
     train = ratings.loc[train_indices]
     test = ratings.loc[test_indices]
     validate = ratings.loc[validate_indices]
@@ -121,11 +121,13 @@ def serialize_example(x, y, mask, hold_back = None):
     return example_proto.SerializeToString()
 
 
-def serialize_df_example(x, mask, userId):
+def serialize_df_example(x, mask, userId, x_test, mask_test):
     feature = {
         'x': _int64_feature(map(int, x)),
         'mask': _int64_feature(map(int, mask)),
-        'userId': _int64_feature([int(userId)])
+        'userId': _int64_feature([int(userId)]),
+        'x_test': _int64_feature(map(int, x_test) if isinstance(x_test, list) else []),
+        'mask_test': _int64_feature(map(int, mask_test) if isinstance(mask_test, list) else []),
     }
     return tf.train.Example(features=tf.train.Features(feature=feature)).SerializeToString()
 
@@ -137,7 +139,7 @@ def save_to_records(x, mask, y, filename):
 def save_df_to_records(df, filename):
     writer = tf.io.TFRecordWriter(filename)
     for df_tuple in df.itertuples():
-        writer.write(serialize_df_example(df_tuple.positive, df_tuple.rated, df_tuple.userId))
+        writer.write(serialize_df_example(df_tuple.positive, df_tuple.rated, df_tuple.userId, df_tuple.positive_test, df_tuple.rated_test))
 
 
 def save_test_to_records(x, mask, y, held_back, filename):
@@ -147,7 +149,7 @@ def save_test_to_records(x, mask, y, held_back, filename):
         writer.write(serialize_example(x[i], mask[i], y[i], held_back[i]))
 
 if __name__ == "__main__":
-    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
+    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
     ratings['userId'] -= 1
     print("Nr of ratings:", ratings['rating'].count())
     nr_items = ratings['mId'].max() + 1
@@ -155,17 +157,26 @@ if __name__ == "__main__":
     print("Items:", nr_items)
     print("User:", nr_users)
     train_ratings, test_ratings, validate_ratings = split_train_test_validate_df(ratings)
+    print("Train ratings:", len(train_ratings))
+    print("Validation ratings:", len(validate_ratings))
+    print("Test ratings:", len(test_ratings))
 
     train_ratings = group_and_transform(train_ratings)
     train_ratings['rated'] = train_ratings['rated'].map(lambda x: augment_negative_sampling([y[0] for y in x], nr_items))
 
-    test_ratings = group_and_transform(test_ratings)
-    test_ratings['rated'] = test_ratings['rated'].map(lambda x: [y[0] for y in x])
-
     validate_ratings = group_and_transform(validate_ratings)
     validate_ratings['rated'] = validate_ratings['rated'].map(lambda x: [y[0] for y in x])
 
+    train_data = train_ratings.merge(validate_ratings, how='left', on='userId', suffixes=('', '_test'))
 
-    save_df_to_records(train_ratings, os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/train.tfrecords')
-    save_df_to_records(validate_ratings, os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/validate.tfrecords')
-    save_df_to_records(test_ratings, os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/test.tfrecords')
+    test_user_sample = train_ratings.loc[np.random.rand(len(train_ratings)) > 0.8]
+    test_ratings = group_and_transform(test_ratings)
+    test_ratings['rated'] = test_ratings['rated'].map(lambda x: [y[0] for y in x])
+
+
+    test_data =test_user_sample.merge(test_ratings, how='inner', on='userId', suffixes=('', '_test'))
+    test_data = test_data.loc[test_data.positive_test.apply(lambda x: len(x) > 0)]
+
+
+    save_df_to_records(train_data, os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/train.tfrecords')
+    save_df_to_records(test_data, os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/test.tfrecords')

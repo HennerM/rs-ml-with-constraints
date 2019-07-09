@@ -49,8 +49,8 @@ class MatrixFactorization(BaseModel):
             for data in dataset:
                 loss_value, grads = grad(self.model, data)
                 self.optimizer.apply_gradients(zip(grads, [self.model.U, self.model.P]))
-                if step % 20 == 0:
-                    print("Epoch {:03d} Loss at step {:03d}: {:.3f}".format(i, step, loss_value))
+                if step % 10 == 0:
+                    print("Epoch {} Loss at step {}: {:.3f}".format(i, step, loss_value))
                 step += 1
 
 
