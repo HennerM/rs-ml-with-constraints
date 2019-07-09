@@ -183,6 +183,14 @@ class Evaluation:
         for i in range(nr_processes):
             input_q.put(None)
 
+        input_q.close()
+        input_q.join_thread()
+
+        for i in range(nr_processes):
+            processes[i].join()
+
+        output_q.put(None)
+
         i = 0
         while True:
             result = output_q.get()
@@ -197,12 +205,8 @@ class Evaluation:
                 metrics[k] += result[k]
             output_q.task_done()
 
-        input_q.close()
-        input_q.join_thread()
         output_q.close()
         output_q.join_thread()
-        for i in range(nr_processes):
-            processes[i].join()
 
         metrics = {key: (v / nr_batches) for (key, v) in metrics.items()}
         metrics['name'] = model.get_name()
@@ -221,7 +225,6 @@ def work_on_batch(input_queue, output_queue, evaluation):
         data = input_queue.get()
         if data is None:
             input_queue.task_done()
-            output_queue.put(None)
             break
 
         batch, predictions, batch_nr = data
