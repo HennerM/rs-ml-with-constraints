@@ -55,7 +55,10 @@ class Evaluation:
         pred = predictions > 0.5
         tp = (pred * actual * mask).sum()
         fp = (pred * (~actual) * mask).sum()
-        return tp / (tp + fp)
+        if tp + fp == 0:
+            return 0
+        else:
+            return tp / (tp + fp)
 
     @staticmethod
     def calculate_recall(predictions, actual, mask):
@@ -179,12 +182,16 @@ class Evaluation:
             x = batch['x']
             user_ids = batch['user_id']
             predictions = model.predict(x, user_ids)
+            print('Batch nr {} predicted'.format(nr_batches + 1))
             self.input_q.put((batch, predictions, nr_batches))
             nr_batches += 1
 
+        print('waiting for queue')
         self.input_q.join()
         self.output_q.put(None)
 
+
+        print('processing results')
         i = 0
         while True:
             result = self.output_q.get()

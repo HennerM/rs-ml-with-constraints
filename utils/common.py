@@ -2,16 +2,17 @@ from typing import Tuple
 
 import os
 import tensorflow as tf
-from numpy.core.multiarray import ndarray
+
+ml_feature = {
+    'x': tf.io.VarLenFeature(tf.int64),
+    'mask': tf.io.VarLenFeature(tf.int64),
+    'x_test': tf.io.VarLenFeature(tf.int64),
+    'mask_test': tf.io.VarLenFeature(tf.int64),
+    'userId': tf.io.FixedLenFeature([], tf.int64, default_value=0),
+}
 
 movie_lens = {
-    'feature_description': {
-        'x': tf.io.VarLenFeature(tf.int64),
-        'mask': tf.io.VarLenFeature(tf.int64),
-        'x_test': tf.io.VarLenFeature(tf.int64),
-        'mask_test': tf.io.VarLenFeature(tf.int64),
-        'userId': tf.io.FixedLenFeature([], tf.int64, default_value=0),
-    },
+    'feature_description': ml_feature,
     'train': {
         'records': 138493,
         'filenames': [os.path.dirname(__file__) + '/../../Data/MovieLens/ml-20m/train.tfrecords']
@@ -24,6 +25,22 @@ movie_lens = {
     'user': 138493,
     'dimensions': 10381,
 }
+
+ml_small = {
+    'feature_description': ml_feature,
+    'train': {
+        'records': 610,
+        'filenames': [os.path.dirname(__file__) + '/../../Data/MovieLens/ml-latest-small/train.tfrecords']
+    },
+    'test': {
+        'records': 610,
+        'filenames': (os.path.dirname(__file__) + '/../../Data/MovieLens/ml-latest-small/test.tfrecords')
+    },
+    'item_features': os.path.dirname(__file__) + '/../../Data/MovieLens/movie_features.npz',
+    'user': 610,
+    'dimensions': 10379,
+}
+
 
 
 def load_dataset(ds: dict, edition = 'train') -> tf.data.Dataset:
