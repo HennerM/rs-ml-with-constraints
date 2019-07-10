@@ -14,7 +14,7 @@ import os
 def disc(k):
     return 1 / np.log2(k + 1)
 
-
+# Class is not thread safe!
 class Evaluation:
 
     def __init__(self, dataset: dict):
@@ -22,6 +22,18 @@ class Evaluation:
         loaded_features = np.load(dataset['item_features'], allow_pickle=True)
         self.item_features = loaded_features['features']
         self.known_frequencies = loaded_features['known_frequency']
+        nr_processes = multiprocessing.cpu_count() - 2
+        self.input_q = multiprocessing.JoinableQueue()
+        self.output_q = multiprocessing.JoinableQueue()
+        self.processes = [multiprocessing.Process(target=work_on_batch, args=(self.input_q, self.output_q, self)) for i in range(nr_processes)]
+        for i in range(nr_processes):
+            self.processes[i].start()
+
+
+    def __del__(self):
+        for p in self.processes:
+            self.input_q.put(None)
+            # p.terminate()
 
     @staticmethod
     def calculate_MSE(predictions, actual, mask):
@@ -163,37 +175,19 @@ class Evaluation:
 
         metrics = dict()
 
-
-        nr_processes = multiprocessing.cpu_count() -1
-
-        input_q = multiprocessing.JoinableQueue()
-        output_q = multiprocessing.JoinableQueue()
-
-        processes = [multiprocessing.Process(target=work_on_batch, args=(input_q, output_q, self)) for i in range(nr_processes)]
-        for i in range(nr_processes):
-            processes[i].start()
-
         for batch in dataset:
             x = batch['x']
             user_ids = batch['user_id']
             predictions = model.predict(x, user_ids)
+            self.input_q.put((batch, predictions, nr_batches))
             nr_batches += 1
-            input_q.put((batch, predictions, nr_batches))
 
-        for i in range(nr_processes):
-            input_q.put(None)
-
-        input_q.close()
-        input_q.join_thread()
-
-        for i in range(nr_processes):
-            processes[i].join()
-
-        output_q.put(None)
+        self.input_q.join()
+        self.output_q.put(None)
 
         i = 0
         while True:
-            result = output_q.get()
+            result = self.output_q.get()
             if result is None:
                 break
             i += 1
@@ -203,10 +197,7 @@ class Evaluation:
             for k in result:
                 metrics.setdefault(k, 0)
                 metrics[k] += result[k]
-            output_q.task_done()
-
-        output_q.close()
-        output_q.join_thread()
+            self.output_q.task_done()
 
         metrics = {key: (v / nr_batches) for (key, v) in metrics.items()}
         metrics['name'] = model.get_name()
@@ -223,14 +214,17 @@ class Evaluation:
 def work_on_batch(input_queue, output_queue, evaluation):
     while True:
         data = input_queue.get()
+        start = time.time()
         if data is None:
             input_queue.task_done()
             break
 
         batch, predictions, batch_nr = data
+
         output = evaluation.calc_recommendation_metrics(predictions, batch)
         output_queue.put(output)
         input_queue.task_done()
+
 
 
 if __name__ == "__main__":
