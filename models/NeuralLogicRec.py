@@ -3,6 +3,7 @@ import tensorflow as tf
 
 from models.BaseModel import BaseModel
 from utils.common import printProgressBar
+import time
 
 
 class NeuralLogicRec(tf.keras.Model):
@@ -13,12 +14,12 @@ class NeuralLogicRec(tf.keras.Model):
         self.user_transform = tf.keras.layers.Dense(units=self.embedding_dim, activation='relu')
         self.item_transform = tf.keras.layers.Dense(units=self.embedding_dim, activation='relu')
 
-        self.user_embedding = tf.Variable(initial_value=tf.random.truncated_normal([nr_users, embedding_dim], name='embedding_user'))
-        self.item_embedding = tf.Variable(initial_value=tf.random.truncated_normal([nr_items, embedding_dim], name='embedding_item'))
+        self.user_embedding = tf.Variable(initial_value=tf.random.normal([nr_users, embedding_dim],  name='embedding_user'))
+        self.item_embedding = tf.Variable(initial_value=tf.random.normal([nr_items, embedding_dim], name='embedding_item'))
 
         self.rec_estimator = tf.keras.Sequential([
             tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=16, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')])
         self.nr_users = nr_users
         self.nr_items = nr_items
@@ -26,11 +27,6 @@ class NeuralLogicRec(tf.keras.Model):
 
     def call(self, users, items):
         batch_size = tf.shape(users)[0]
-        # users_one_hot = tf.reshape(tf.one_hot(users, self.nr_users), [batch_size, self.nr_users])
-        # items_one_hot = tf.reshape(tf.one_hot(items, self.nr_items), [batch_size, self.nr_items])
-
-        # user_embeddings = self.user_transform(users_one_hot)
-        # item_embeddings = self.item_transform(items_one_hot)
 
         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
         embed_item = tf.nn.embedding_lookup(self.item_embedding, items)
@@ -41,12 +37,13 @@ class NeuralLogicRec(tf.keras.Model):
         return output
 
 
+
 def loss_from_input(model, targets):
     users = targets['user_id']
     items = targets['item_id']
-    rating = targets['rating']
+    rating = tf.cast(targets['rating'], tf.float32)
     predictions = model(users, items)
-    return supervised_loss(predictions, rating)
+    return supervised_loss(predictions, rating)  + 0.001 * tf.linalg.norm(model.user_embedding) + 0.001 * tf.linalg.norm(model.item_embedding)
 
 def supervised_loss(predictions, target):
     return tf.keras.losses.mean_squared_error(target, predictions)
@@ -59,6 +56,9 @@ def grad(model, targets):
 
 
 def constraint_loss(y):
+
+    # Likes(u, m) => ~Rec(m)
+    # Likes(u,
     return 0.0
 
 def map_inference(model, network_output):
@@ -100,7 +100,7 @@ class NLR(BaseModel):
         self.epochs = kwargs.get('epochs', 10)
         self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim)
         self.batch_size = kwargs.get('batch_size', 128)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
+        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
 
     @staticmethod
     def transform_train_data(record):
@@ -113,17 +113,19 @@ class NLR(BaseModel):
 
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
-        dataset = dataset.flat_map(self.transform_train_data).batch(self.batch_size)
-        dataset = dataset.shuffle(2048)
+        dataset = dataset.shuffle(256).flat_map(self.transform_train_data).batch(self.batch_size)
+        dataset = dataset.shuffle(10_000)
         nr_steps = nr_records // self.batch_size
         for i in range(self.epochs):
             step = 0
+            epcoh_start = time.time()
             for data in dataset:
                 loss_value, grads = grad(self.model, data)
                 self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
                 # printProgressBar(step, nr_steps, 'Epoch {}, loss:  {:.3f}'.format(i, loss_value),length=80)
                 if step % 10 == 0:
-                    print("\rEpoch #{} Loss at step {}: {:.4f}".format(i, step, tf.reduce_mean(loss_value).numpy()), end='\r')
+                    diff = time.time() - epcoh_start
+                    print("\rEpoch #{} Loss at step {}: {:.4f}, time: {:.3f}".format(i, step, tf.reduce_mean(loss_value).numpy(), diff), end='\r')
                 step += 1
             print()
 
