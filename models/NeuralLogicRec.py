@@ -31,7 +31,7 @@ class NeuralLogicRec(tf.keras.Model):
         self.nr_items = nr_items
 
         self.constraint_weights = tf.Variable(initial_value=tf.random.normal([1]), name='constraint_weights')
-        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.03)
 
 
     def call(self, users, items):
@@ -40,8 +40,10 @@ class NeuralLogicRec(tf.keras.Model):
         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
         embed_item = tf.nn.embedding_lookup(self.item_embedding, items)
 
+
         input = tf.concat([embed_user, embed_item], axis=1)
-        output = {'likes': self.likes_estimator(input), 'rec': self.likes_estimator(input) }
+        estimated_likes = tf.squeeze(self.likes_estimator(input))
+        output = {'likes': estimated_likes, 'rec': estimated_likes}
 
         return output
 
@@ -57,8 +59,8 @@ def loss_from_input(model, targets):
 def supervised_loss(predictions, target):
     return tf.keras.losses.mean_squared_error(target, predictions)
 
-def nn_loss(network_output, y):
-    return tf.reduce_mean(supervised_loss(network_output['likes'], y['likes']))
+def negative_mse(network_output, y):
+    return tf.math.negative(supervised_loss(network_output['likes'], y['likes']))
 
 def grad(model, targets):
     with tf.GradientTape() as tape:
@@ -77,21 +79,19 @@ def constraint_satisfaction(y):
     norm = 1 - tf.abs(tf.clip_by_value(y['likes'],0.,1.0) - Not(tf.clip_by_value(y['rec'], 0., 1.0)))
     return Forall(norm)
 
-def map_inference(model, network_output):
+def map_inference(model, network_output, convergence_e = 1e-3):
     y = {"likes": tf.Variable(initial_value=tf.random.truncated_normal(network_output['likes'].shape, mean=.5,stddev=.25)),
             "rec": tf.Variable(initial_value=tf.random.truncated_normal(network_output['rec'].shape, mean=.5, stddev=.25)),
          }
 
     previous_loss = None
-    for i in range(16):
+    for i in range(1000):
         with tf.GradientTape() as tape:
-            l = tf.math.negative(nn_loss(network_output, y) + model.constraint_weights * constraint_satisfaction(y))
+            l = tf.math.negative(negative_mse(network_output, y) + model.constraint_weights * constraint_satisfaction(y))
         grad = tape.gradient(l, [y['likes'], y['rec']])
         model.optimizer.apply_gradients(zip(grad, [y['likes'], y['rec'] ]))
-        if previous_loss is not None and tf.abs(previous_loss - l) < 1e-5:
-            # print('converged at iteration {}'.format(i))
+        if previous_loss is not None and tf.abs(previous_loss - l) < convergence_e:
             break
-        # print(l)
         previous_loss = l
 
     return y
@@ -99,7 +99,7 @@ def map_inference(model, network_output):
 
 def ltn_loss(model, target, map_solution, fnn):
     regularization = 0
-    cost = regularization + tf.linalg.norm(target['likes'] - fnn['likes'])/2 + tf.linalg.norm(map_solution['likes'] - fnn['likes'])/2
+    cost = regularization + tf.keras.losses.mean_squared_error(target['likes'], fnn['likes'])/2 + tf.keras.losses.mean_squared_error(map_solution['likes'], fnn['likes'])/2
     cost += model.constraint_weights * (constraint_satisfaction(target) - constraint_satisfaction(map_solution))
     return cost
 
@@ -123,7 +123,7 @@ class NLR(BaseModel):
         self.epochs = kwargs.get('epochs', 10)
         self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim)
         self.batch_size = kwargs.get('batch_size', 128)
-        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
     @staticmethod
     def transform_train_data(record):
@@ -136,9 +136,9 @@ class NLR(BaseModel):
 
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
-        # dataset = dataset.shuffle(512)
+        dataset = dataset.shuffle(64)
         dataset = dataset.flat_map(self.transform_train_data).batch(self.batch_size)
-        dataset = dataset #.shuffle(20_000)
+        dataset = dataset.shuffle(3000)
         for i in range(self.epochs):
             step = 0
             epcoh_start = time.time()
@@ -167,7 +167,7 @@ class NLR(BaseModel):
         user = np.repeat(user, self.nr_items)
         predictions = self.model(user, items)
         inference = map_inference(self.model, predictions)
-        return predictions['likes'].numpy().T
+        return inference['rec'].numpy().T
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         # output =  np.asarray(list(map(lambda x: self.predict_single_user(x), user_ids)))
