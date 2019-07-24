@@ -22,39 +22,29 @@ class NeuralLogicRec(tf.keras.Model):
             tf.keras.layers.Dense(units=16, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
 
-        # self.rec_estimator = tf.keras.Sequential([
-        #     tf.keras.layers.Dense(units=32, activation='relu'),
-        #     tf.keras.layers.Dense(units=16, activation='relu'),
-        #     tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rec_estimator')
+        self.rec_estimator = tf.keras.Sequential([
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=16, activation='relu'),
+            tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rec_estimator')
 
         self.nr_users = nr_users
         self.nr_items = nr_items
 
-        self.constraint_weights = tf.Variable(initial_value=tf.random.normal([1]), name='constraint_weights')
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.03)
+        self.constraint_weights = tf.Variable(initial_value=tf.random.normal([2]), name='constraint_weights')
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
 
     def call(self, users, items):
-        batch_size = tf.shape(users)[0]
-
         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
         embed_item = tf.nn.embedding_lookup(self.item_embedding, items)
 
-
         input = tf.concat([embed_user, embed_item], axis=1)
         estimated_likes = tf.squeeze(self.likes_estimator(input))
-        output = {'likes': estimated_likes, 'rec': estimated_likes}
+        estimated_rec = tf.squeeze(self.rec_estimator(input))
+        output = {'likes': estimated_likes, 'rec': estimated_rec}
 
         return output
 
-
-
-def loss_from_input(model, targets):
-    users = targets['user_id']
-    items = targets['item_id']
-    rating = tf.cast(targets['rating'], tf.float32)
-    predictions = model(users, items)
-    return supervised_loss(predictions, rating)  + 0.001 * tf.linalg.norm(model.user_embedding) + 0.001 * tf.linalg.norm(model.item_embedding)
 
 def supervised_loss(predictions, target):
     return tf.keras.losses.mean_squared_error(target, predictions)
@@ -62,11 +52,9 @@ def supervised_loss(predictions, target):
 def negative_mse(network_output, y):
     return tf.math.negative(supervised_loss(network_output['likes'], y['likes']))
 
-def grad(model, targets):
-    with tf.GradientTape() as tape:
-        loss_value = loss_from_input(model, targets)
-    return loss_value, tape.gradient(loss_value, model.trainable_variables)
 
+def Implies(a, b):
+    return tf.minimum(1., 1 - a + b)
 
 def Not(wff):
     return 1 - wff
@@ -75,19 +63,22 @@ def Forall(wff):
     return tf.reduce_mean(wff)
 
 def constraint_satisfaction(y):
-    # Likes(u, m) => ~Rec(m): 1 - tf.abs(Likes(u,m), 1 - Rec(u, m)
-    norm = 1 - tf.abs(tf.clip_by_value(y['likes'],0.,1.0) - Not(tf.clip_by_value(y['rec'], 0., 1.0)))
-    return Forall(norm)
+    # Likes(u, m) => ~Rec(m)
+    wff1 = Forall(Implies(y['rec'], y['likes']))
+    wff2 = Forall(Implies(y['likes'], Not(y['rec'])))
+    # Sim(u1, u2) & Likes(u1, m) => Rec(u2, m)
+    # TODO
+    return tf.stack([wff1, wff2], axis=0)
 
 def map_inference(model, network_output, convergence_e = 1e-3):
-    y = {"likes": tf.Variable(initial_value=tf.random.truncated_normal(network_output['likes'].shape, mean=.5,stddev=.25)),
-            "rec": tf.Variable(initial_value=tf.random.truncated_normal(network_output['rec'].shape, mean=.5, stddev=.25)),
+    y = {"likes": tf.Variable(initial_value=tf.random.truncated_normal(network_output['likes'].shape, mean=.5,stddev=.25), constraint=lambda t: tf.clip_by_value(t, 0., 1.)),
+            "rec": tf.Variable(initial_value=tf.random.truncated_normal(network_output['rec'].shape, mean=.5, stddev=.25), constraint=lambda t: tf.clip_by_value(t, 0., 1.)),
          }
 
     previous_loss = None
-    for i in range(1000):
+    for i in range(2048):
         with tf.GradientTape() as tape:
-            l = tf.math.negative(negative_mse(network_output, y) + model.constraint_weights * constraint_satisfaction(y))
+            l = tf.math.negative(negative_mse(network_output, y) + tf.reduce_sum(model.constraint_weights * constraint_satisfaction(y)))
         grad = tape.gradient(l, [y['likes'], y['rec']])
         model.optimizer.apply_gradients(zip(grad, [y['likes'], y['rec'] ]))
         if previous_loss is not None and tf.abs(previous_loss - l) < convergence_e:
@@ -96,11 +87,16 @@ def map_inference(model, network_output, convergence_e = 1e-3):
 
     return y
 
+def supervised_target_loss(target, fnn):
+    return supervised_loss(fnn['likes'], target['likes'])
+
+def supervised_map_loss(map, fnn):
+    return supervised_loss(fnn['likes'], map['likes']) + supervised_loss(fnn['rec'], map['rec'])
 
 def ltn_loss(model, target, map_solution, fnn):
     regularization = 0
-    cost = regularization + tf.keras.losses.mean_squared_error(target['likes'], fnn['likes'])/2 + tf.keras.losses.mean_squared_error(map_solution['likes'], fnn['likes'])/2
-    cost += model.constraint_weights * (constraint_satisfaction(target) - constraint_satisfaction(map_solution))
+    cost = regularization + supervised_target_loss(target, fnn)/2 + supervised_map_loss(map_solution, fnn)/2
+    cost += tf.reduce_sum(model.constraint_weights * (constraint_satisfaction(target) - constraint_satisfaction(map_solution)))
     return cost
 
 def train_dtn(model, input, target):
