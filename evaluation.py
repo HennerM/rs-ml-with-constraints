@@ -221,6 +221,7 @@ class Evaluation:
 def work_on_batch(input_queue, output_queue, evaluation):
     while True:
         data = input_queue.get()
+        print("Process batch")
         start = time.time()
         if data is None:
             input_queue.task_done()
@@ -229,6 +230,7 @@ def work_on_batch(input_queue, output_queue, evaluation):
         batch, predictions, batch_nr = data
 
         output = evaluation.calc_recommendation_metrics(predictions, batch)
+        print("Processing batch done")
         output_queue.put(output)
         input_queue.task_done()
 

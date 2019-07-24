@@ -68,6 +68,8 @@ def constraint_satisfaction(y):
     wff2 = Forall(Implies(y['likes'], Not(y['rec'])))
     # Sim(u1, u2) & Likes(u1, m) => Rec(u2, m)
     # TODO
+
+
     return tf.stack([wff1, wff2], axis=0)
 
 def map_inference(model, network_output, convergence_e = 1e-3):
@@ -143,9 +145,8 @@ class NLR(BaseModel):
                 loss_value, grads = train_dtn(self.model, data, {'likes': data['rating'], 'rec': tf.zeros_like(data['rating'])})
                 self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
                 # printProgressBar(step, nr_steps, 'Epoch {}, loss:  {:.3f}'.format(i, loss_value),length=80)
-                if step % 10 == 0:
-                    diff = time.time() - epcoh_start
-                    print("\rEpoch #{} Loss at step {}: {:.4f}, time: {:.3f}".format(i, step, tf.reduce_mean(loss_value).numpy(), diff), end='\r')
+                diff = time.time() - epcoh_start
+                print("\rEpoch #{} Loss at step {}: {:.4f}, time: {:.3f}".format(i, step, tf.reduce_mean(loss_value).numpy(), diff), end='\r')
                 step += 1
             print()
 
@@ -166,11 +167,15 @@ class NLR(BaseModel):
         return inference['rec'].numpy().T
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
-        # output =  np.asarray(list(map(lambda x: self.predict_single_user(x), user_ids)))
-        output = np.zeros(data.shape)
-        for user_id in range(data.shape[0]):
-            output[user_id] = self.predict_single_user(user_id)
-        return output
+        user_ids = tf.convert_to_tensor(user_ids)
+        items = tf.convert_to_tensor(np.arange(self.nr_items))
+
+        users = tf.tile(user_ids, items.shape)
+        items = tf.sort(tf.tile(items, user_ids.shape))
+        predictions = self.model(users, items)
+        inference = map_inference(self.model, predictions)
+        tmp = tf.reshape(inference['rec'], [self.nr_items, len(user_ids)])
+        return tf.transpose(tmp).numpy()
 
     def get_name(self) -> str:
         return "NeuralLogicRec"
