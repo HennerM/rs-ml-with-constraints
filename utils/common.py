@@ -38,7 +38,7 @@ ml_small = {
     },
     'item_features': os.path.dirname(__file__) + '/../../Data/MovieLens/movie_features.npz',
     'user': 610,
-    'dimensions': 10379,
+    'dimensions': 10381,
 }
 
 
