@@ -48,13 +48,9 @@ def load_dataset(ds: dict, edition = 'train') -> tf.data.Dataset:
         parsed = tf.io.parse_single_example(example_proto, ds['feature_description'])
         x = tf.sparse.to_indicator(parsed['x'], ds['dimensions'])
         mask = tf.sparse.to_indicator(parsed['mask'], ds['dimensions'])
-        if edition == 'test':
-            x_test = tf.sparse.to_indicator(parsed['x_test'], ds['dimensions'])
-            mask_test = tf.sparse.to_indicator(parsed['mask_test'], ds['dimensions'])
-            return {'x': x, 'mask': mask, 'user_id': parsed['userId'], 'x_test': x_test, 'mask_test': mask_test}
-
-        else:
-            return {'x': x, 'mask': mask, 'user_id': parsed['userId']}
+        x_test = tf.sparse.to_indicator(parsed['x_test'], ds['dimensions'])
+        mask_test = tf.sparse.to_indicator(parsed['mask_test'], ds['dimensions'])
+        return {'x': x, 'mask': mask, 'user_id': parsed['userId'], 'x_test': x_test, 'mask_test': mask_test}
 
     return tf.data.TFRecordDataset(ds[edition]['filenames']).map(parse_example)
 

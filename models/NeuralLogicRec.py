@@ -25,13 +25,6 @@ class NeuralLogicRec(tf.keras.Model):
             tf.keras.layers.Dense(units=16, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
 
-        self.rec_estimator = tf.keras.Sequential([
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=16, activation='relu'),
-            tf.keras.layers.Dense(units=16, activation='relu'),
-            tf.keras.layers.Dense(units=16, activation='relu'),
-            tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rec_estimator')
-
         self.nr_users = nr_users
         self.nr_items = nr_items
 
@@ -52,24 +45,9 @@ class NeuralLogicRec(tf.keras.Model):
         embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
         input = tf.concat([embed_user_likes, embed_item], axis=-1)
         estimated_likes = tf.squeeze(self.likes_estimator(input), axis=-1)
-        estimated_rec = tf.squeeze(self.rec_estimator(input), axis=-1)
+        # estimated_rec = tf.squeeze(self.rec_estimator(input), axis=-1)
 
-        return {'likes': estimated_likes, 'rec': estimated_rec, 'sim': self.calc_user_sim(embed_user, len(users))}
-
-    def train(self, user_cross):
-        embed_user = tf.expand_dims(tf.nn.embedding_lookup(self.user_embedding, user_cross), axis=2)
-        embed_user = tf.tile(embed_user, [1, 1, self.nr_items, 1])
-        expanded_embedd = tf.reshape(self.item_embedding, [1, 1, self.nr_items, self.embedding_dim])
-        embed_item = tf.tile(expanded_embedd, [len(user_cross), 2, 1, 1])
-
-
-        input = tf.concat([embed_user, embed_item], axis=-1)
-        estimated_likes = tf.squeeze(self.likes_estimator(input))
-        estimated_rec = tf.squeeze(self.rec_estimator(input))
-        output = {'likes': estimated_likes, 'rec': estimated_rec}
-
-        return output
-
+        return {'likes': estimated_likes, 'sim': self.calc_user_sim(embed_user, len(users))}
 
 def sim(a, b):
     cos_similarity = tf.keras.losses.cosine_similarity(a, b,axis=-1)
@@ -94,25 +72,26 @@ def Forall(wff, axis=None):
 def And(a, b):
     return tf.maximum(0.0, a + b - 1)
 
-def constraint_satisfaction(model, likes, rec, sim):
+def constraint_satisfaction(model, likes, sim):
 
     # Rec(u, m) => Likes(u,m)
-    wff1 = tf.expand_dims(Forall(Implies(rec, likes)), axis=0)
+    # wff1 = tf.expand_dims(Forall(Implies(rec, likes)), axis=0)
     # Likes(u, m) => ~Rec(m)
-    wff2 = tf.expand_dims(Forall(Implies(likes, Not(rec))), axis=0)
+    # wff2 = tf.expand_dims(Forall(Implies(likes, Not(rec))), axis=0)
 
     # Sim(u1, u2) & Likes(u1, m) => Rec(u2, m)
     sim = tf.tile(tf.expand_dims(sim, axis=-1), [1, 1, likes.shape[1]])
-    likes = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
-    rec = tf.tile(tf.expand_dims(rec, axis=1), [1, sim.shape[0], 1])
+    likes_u1 = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
+    likes_u2 = tf.tile(tf.expand_dims(likes, axis=1), [1, sim.shape[0], 1])
     # rec2 = tf.tile(tf.expand_dims(rec, axis=0), [sim.shape[0], 1, 1])
 
-    wff3 = tf.expand_dims(Forall(Implies(And(sim, likes), rec)), axis=0)
-    wff4 = tf.expand_dims(Forall(Implies(And(sim, Not(likes)), Not(rec))), axis=0)
+    wff3 = tf.expand_dims(Forall(Implies(And(sim, likes_u1), likes_u2)), axis=0)
+    wff4 = tf.expand_dims(Forall(Implies(And(sim, Not(likes_u1)), Not(likes_u2))), axis=0)
+    wff5 = tf.expand_dims(Forall(Implies(And(Not(sim), likes_u1), Not(likes_u2))), axis=0)
     # tmp = Forall(Implies(And(sim, likes), rec2), axis=[0,1])
     # print(wff3.numpy().mean(), tmp.numpy().mean())
 
-    res = tf.concat([wff1, wff2, wff3, wff4], axis=0)
+    res = tf.concat([wff3, wff4, wff5], axis=0)
 
     return res
 
@@ -137,7 +116,9 @@ def map_inference(model, network_output, convergence_e = 1e-3):
     return {'likes': y_likes, 'rec': y_recs, 'sim': y_sim}
 
 def supervised_target_loss(target, fnn):
-    return supervised_loss(fnn['likes'], target['likes'])
+    num_ratings = tf.reduce_sum(target['mask'])
+    num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
+    return tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['mask'])) / num_ratings
 
 def supervised_map_loss(map, fnn):
     return supervised_loss(fnn['likes'], map['likes']) + supervised_loss(fnn['rec'], map['rec'])
@@ -145,7 +126,7 @@ def supervised_map_loss(map, fnn):
 def ltn_loss(model, target, fnn):
     regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 # * tf.linalg.norm(model.constraint_weights)
     cost = regularization + supervised_target_loss(target, fnn) / 2 # + supervised_map_loss(map, fnn) / 2
-    cost += (tf.reduce_sum((1 - constraint_satisfaction(model, fnn['likes'], fnn['rec'], fnn['sim']))))
+    cost += (tf.reduce_sum((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim']))))
     return cost
 
 def train_dtn(model, input):
@@ -154,7 +135,7 @@ def train_dtn(model, input):
 
     embed_user = tf.nn.embedding_lookup(model.user_embedding, users)
 
-    target = {'likes': rated }
+    target = {'likes': rated, 'mask': tf.cast(input['mask'], tf.float32) }
     # user_cross = tf.convert_to_tensor([x for x in itertools.permutations(users.numpy(), 2)])
     with tf.GradientTape() as tape:
         fnn = model(users)
@@ -175,7 +156,7 @@ class NLR(BaseModel):
         self.epochs = kwargs.get('epochs', 10)
         self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim)
         self.batch_size = kwargs.get('batch_size', 128)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
     @staticmethod
     def transform_train_data(record):

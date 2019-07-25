@@ -133,6 +133,8 @@ class Evaluation:
     @staticmethod
     def average_precision(recommendations, x_test, n):
         running_sum = 0
+        if np.sum(x_test) == 0:
+            return 0
         for k in range(1, n + 1):
             relevant = x_test[recommendations[k - 1]]
             prec = Evaluation.precision_at_n(recommendations[:k], x_test, k)
@@ -172,11 +174,12 @@ class Evaluation:
         return metrics
 
 
-    def evaluate(self, model: BaseModel, batches_to_evaluate = None):
+    def evaluate(self, model: BaseModel, mode = 'test', max_nr_batches = None):
         nr_batches = 0
-        dataset = load_dataset(self.dataset, 'test').batch(128)
-        if batches_to_evaluate is not None:
-            dataset = dataset.take(batches_to_evaluate)
+        dataset = load_dataset(self.dataset, mode).batch(128)
+
+        if max_nr_batches is not None:
+            dataset = dataset.take(max_nr_batches)
 
         metrics = dict()
 

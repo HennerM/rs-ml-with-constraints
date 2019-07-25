@@ -131,22 +131,12 @@ def serialize_df_example(x, mask, userId, x_test, mask_test):
     }
     return tf.train.Example(features=tf.train.Features(feature=feature)).SerializeToString()
 
-def save_to_records(x, mask, y, filename):
-    writer = tf.io.TFRecordWriter(filename)
-    for i in range(x.shape[0]):
-        writer.write(serialize_example(x[i], mask[i], y[i]))
-
 def save_df_to_records(df, filename):
     writer = tf.io.TFRecordWriter(filename)
     for df_tuple in df.itertuples():
         writer.write(serialize_df_example(df_tuple.positive, df_tuple.rated, df_tuple.userId, df_tuple.positive_test, df_tuple.rated_test))
 
 
-def save_test_to_records(x, mask, y, held_back, filename):
-    writer = tf.io.TFRecordWriter(filename)
-    for i in range(x.shape[0]):
-
-        writer.write(serialize_example(x[i], mask[i], y[i], held_back[i]))
 
 if __name__ == "__main__":
     ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
