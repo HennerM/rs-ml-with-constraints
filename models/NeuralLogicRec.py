@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-from models.BaseModel import BaseModel
+# from models.BaseModel import BaseModel
 import time
 
 
@@ -20,10 +20,16 @@ class NeuralLogicRec(tf.keras.Model):
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
 
+        self.rated_estimator = tf.keras.Sequential([
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rated_estimator')
+
         self.nr_users = nr_users
         self.nr_items = nr_items
 
-        self.constraint_weights = tf.Variable(initial_value=tf.random.normal([3 * nr_items]), name='constraint_weights')
+        #self.constraint_weights = tf.Variable(initial_value=tf.random.normal([4]), name='constraint_weights')
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
 
@@ -39,9 +45,9 @@ class NeuralLogicRec(tf.keras.Model):
         embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
         input = tf.concat([embed_user_likes, embed_item], axis=-1)
         estimated_likes = tf.squeeze(self.likes_estimator(input), axis=-1)
-        # estimated_rec = tf.squeeze(self.rec_estimator(input), axis=-1)
+        estimated_rated = tf.squeeze(self.rated_estimator(input), axis=-1)
 
-        return {'likes': estimated_likes, 'sim': self.calc_user_sim(embed_user, len(users))}
+        return {'likes': estimated_likes, 'sim': self.calc_user_sim(embed_user, len(users)), 'rated': estimated_rated}
 
 def sim(a, b):
     cos_similarity = tf.keras.losses.cosine_similarity(a, b,axis=-1)
@@ -62,36 +68,54 @@ def Forall(wff, axis=None):
 def And(a, b):
     return tf.maximum(0.0, a + b - 1)
 
-def constraint_satisfaction(model, likes, sim):
+
+def combine_constraints(*constraints):
+    def normalize_shape(tensor):
+        if len(tensor.shape) == 1:
+            return tensor
+        elif len(tensor.shape) == 0:
+            return tf.expand_dims(tensor, axis=0)
+        else:
+            return tf.reshape(tensor, [-1])
+    return tf.concat([normalize_shape(x) for x in constraints], axis=0)
+
+
+def constraint_satisfaction(model, likes, sim, rated):
 
     # Rec(u, m) => Likes(u,m)
     # wff1 = tf.expand_dims(Forall(Implies(rec, likes)), axis=0)
     # Likes(u, m) => ~Rec(m)
     # wff2 = tf.expand_dims(Forall(Implies(likes, Not(rec))), axis=0)
 
-    # Sim(u1, u2) & Likes(u1, m) => Rec(u2, m)
+
     sim = tf.tile(tf.expand_dims(sim, axis=-1), [1, 1, likes.shape[1]])
     likes_u1 = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
     likes_u2 = tf.tile(tf.expand_dims(likes, axis=1), [1, sim.shape[0], 1])
+    # Sim(u1, u2) & Likes(u1, m) => likes(u2, m)
+    wff3 = Forall(Implies(And(sim, likes_u1), likes_u2))
+    # Sim(u1, u2) & ~Likes(u1, m) => ~likes(u2,m)
+    wff4 = Forall(Implies(And(sim, Not(likes_u1)), Not(likes_u2)))
+    # ~Sim(u1,u2) & Likes(u1,m) => ~likes(u2,m)
+    wff5 = Forall(Implies(And(Not(sim), likes_u1), Not(likes_u2)))
 
-    wff3 = Forall(Implies(And(sim, likes_u1), likes_u2), axis=[0,1])
-    wff4 = Forall(Implies(And(sim, Not(likes_u1)), Not(likes_u2)), axis=[0,1])
-    wff5 = Forall(Implies(And(Not(sim), likes_u1), Not(likes_u2)), axis=[0,1])
+    # Likes => Rated
+    wff6 = Forall(Implies(likes, rated))
 
-    res = tf.concat([wff3, wff4, wff5], axis=0)
-
+    res = combine_constraints(wff3, wff4, wff5, wff6)
     return res
 
 
 def supervised_target_loss(target, fnn):
-    num_ratings = tf.reduce_sum(target['mask'])
+    num_ratings = tf.reduce_sum(target['rated'])
     num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
-    return tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['mask'])) / num_ratings
+    likes_loss =  tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['rated'])) / num_ratings
+    rated_loss = tf.keras.losses.mean_squared_error(target['rated'], fnn['rated'])
+    return likes_loss + rated_loss
 
 def ltn_loss(model, target, fnn):
     regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 # * tf.linalg.norm(model.constraint_weights)
     cost = regularization + supervised_target_loss(target, fnn)
-    cost += (tf.reduce_sum(tf.abs(model.constraint_weights * (1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'])))))
+    cost += (tf.reduce_sum(tf.abs((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'], fnn['rated'])))))
     return cost
 
 def train_dtn(model, input):
@@ -100,8 +124,7 @@ def train_dtn(model, input):
 
     embed_user = tf.nn.embedding_lookup(model.user_embedding, users)
 
-    target = {'likes': rated, 'mask': tf.cast(input['mask'], tf.float32) }
-    # user_cross = tf.convert_to_tensor([x for x in itertools.permutations(users.numpy(), 2)])
+    target = {'likes': rated, 'rated': tf.cast(input['mask'], tf.float32) }
     with tf.GradientTape() as tape:
         fnn = model(users)
         loss = ltn_loss(model, target, fnn)
