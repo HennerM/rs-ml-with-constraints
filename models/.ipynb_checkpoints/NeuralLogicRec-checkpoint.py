@@ -18,9 +18,11 @@ class NeuralLogicRec(tf.keras.Model):
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
 
         self.rated_estimator = tf.keras.Sequential([
+            tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
@@ -30,14 +32,13 @@ class NeuralLogicRec(tf.keras.Model):
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='popular_estimator')
 
         self.nr_users = nr_users
         self.nr_items = nr_items
 
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
-
-
+    @tf.function
     def calc_user_sim(self, embed_user, nr_users):
         users_1 = tf.tile(tf.expand_dims(embed_user, axis=1), [1, nr_users, 1])
         users_2 = tf.tile(tf.expand_dims(embed_user, axis=0), [nr_users,1, 1])
@@ -56,26 +57,32 @@ class NeuralLogicRec(tf.keras.Model):
 
         return {'likes': estimated_likes, 'sim': self.calc_user_sim(embed_user, len(users)), 'rated': estimated_rated, 'popular': popular}
 
+@tf.function
 def sim(a, b):
     cos_similarity = tf.keras.losses.cosine_similarity(a, b,axis=-1)
     return ( 1 + cos_similarity) / 2
 
+@tf.function
 def supervised_loss(predictions, target):
     return tf.keras.losses.mean_squared_error(target, predictions)
 
+@tf.function
 def Implies(a, b):
     return tf.minimum(1., 1 - a + b)
 
+@tf.function
 def Not(wff):
     return 1 - wff
 
+@tf.function
 def Forall(wff, axis=None):
     return tf.reduce_mean(wff, axis=axis)
 
+@tf.function
 def And(a, b):
     return tf.maximum(0.0, a + b - 1)
 
-
+@tf.function
 def combine_constraints(*constraints):
     def normalize_shape(tensor):
         if len(tensor.shape) == 1:
@@ -86,7 +93,7 @@ def combine_constraints(*constraints):
             return tf.reshape(tensor, [-1])
     return tf.concat([normalize_shape(x) for x in constraints], axis=0)
 
-
+@tf.function
 def constraint_satisfaction(model, likes, sim, rated, popular):
 
     # Rec(u, m) => Likes(u,m)
@@ -111,30 +118,34 @@ def constraint_satisfaction(model, likes, sim, rated, popular):
     popular_rep = tf.tile(tf.expand_dims(popular, axis=0), [likes.shape[0], 1])
     # Rated(u,m) => Popular(m)
     wff5 = Forall(Implies(rated, popular_rep))
-    # Popular(m) => ~Likes(u,m)
-    wff6 = Forall(Implies(popular_rep, Not(likes)))
+    # ~Popular(m) => Likes(u,m)
+#     wff6 = Forall(Implies(popular_rep, Not(likes)))
+    wff6 = Forall(Implies(Not(popular_rep), likes))
 
+    wff7 = Forall(Implies(And(Not(rated), likes), likes))
 
-    res = combine_constraints(wff1, wff2, wff3, wff4, wff5, wff6)
+    res = combine_constraints(wff1, wff2, wff3, wff4, wff5, wff6, wff7)
     return res
 
-
+@tf.function
 def supervised_target_loss(target, fnn):
     num_ratings = tf.reduce_sum(target['rated'])
     num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
     likes_loss =  tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['rated'])) / num_ratings
-    rated_loss = tf.keras.losses.mean_squared_error(target['rated'], fnn['rated'])
-    return likes_loss + rated_loss
+    return likes_loss
+#     rated_loss = tf.keras.losses.mean_squared_error(target['rated'], fnn['rated'])
+#     return likes_loss + rated_loss
 
+@tf.function
 def ltn_loss(model, target, fnn):
     regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 # * tf.linalg.norm(model.constraint_weights)
     cost = regularization + supervised_target_loss(target, fnn)
-    cost += (tf.reduce_sum(tf.abs((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'], fnn['rated'], fnn['popular'])))))
+    cost += (tf.reduce_sum((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'], fnn['rated'], fnn['popular']))))
     return cost
 
 def train_dtn(model, users, rated, mask):
     
-    target = {'likes': rated, 'rated': mask }
+    target = {'likes': rated, 'rated': mask}
     with tf.GradientTape() as tape:
         fnn = model(users)
         loss = ltn_loss(model, target, fnn)
@@ -152,7 +163,7 @@ class NLR(BaseModel):
         self.embedding_dim = kwargs.get('embedding_dim', 128)
         self.epochs = kwargs.get('epochs', 10)
         self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim)
-        self.batch_size = kwargs.get('batch_size', 128)
+        self.batch_size = kwargs.get('batch_size', 16)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
     @staticmethod
@@ -166,13 +177,16 @@ class NLR(BaseModel):
 
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
-        dataset = dataset.shuffle(64)
+        dataset = dataset.shuffle(512,reshuffle_each_iteration=True)
         dataset = dataset.batch(self.batch_size)
         for i in range(self.epochs):
+            
+            dataset = dataset.shuffle(512)
             step = 0
             epcoh_start = time.time()
             for data in dataset:
                 users = data['user_id']
+#                 print(users)
                 rated = tf.cast(data['x'], tf.float32)
                 mask =  tf.cast(data['mask'], tf.float32)
                 
