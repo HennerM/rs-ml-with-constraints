@@ -134,7 +134,7 @@ def ltn_loss(model, target, fnn):
 
 def train_dtn(model, users, rated, mask):
     
-    target = {'likes': rated, 'rated': mask}
+    target = {'likes': rated, 'rated': mask }
     with tf.GradientTape() as tape:
         fnn = model(users)
         loss = ltn_loss(model, target, fnn)
