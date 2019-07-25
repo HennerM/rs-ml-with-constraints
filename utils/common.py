@@ -30,13 +30,13 @@ ml_small = {
     'feature_description': ml_feature,
     'train': {
         'records': 610,
-        'filenames': [os.path.dirname(__file__) + '/../../Data/MovieLens/ml-latest-small/train.tfrecords']
+        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/train.tfrecords']
     },
     'test': {
         'records': 610,
-        'filenames': (os.path.dirname(__file__) + '/../../Data/MovieLens/ml-latest-small/test.tfrecords')
+        'filenames': '/home/ec2-user/SageMaker/data/MovieLens/test.tfrecords'
     },
-    'item_features': os.path.dirname(__file__) + '/../../Data/MovieLens/movie_features.npz',
+    'item_features': '/home/ec2-user/SageMaker/data/MovieLens/movie_features.npz',
     'user': 610,
     'dimensions': 10381,
 }

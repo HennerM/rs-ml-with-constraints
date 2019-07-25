@@ -3,7 +3,7 @@ import multiprocessing
 from functools import lru_cache
 from typing import List
 
-from common import load_dataset, printProgressBar
+from utils.common import load_dataset, printProgressBar
 import numpy as np
 import pandas as pd
 import time
