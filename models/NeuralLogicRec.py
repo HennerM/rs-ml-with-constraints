@@ -21,17 +21,21 @@ class NeuralLogicRec(tf.keras.Model):
         self.likes_estimator = tf.keras.Sequential([
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=16, activation='relu'),
+            tf.keras.layers.Dense(units=16, activation='relu'),
+            tf.keras.layers.Dense(units=16, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
 
         self.rec_estimator = tf.keras.Sequential([
             tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=16, activation='relu'),
+            tf.keras.layers.Dense(units=16, activation='relu'),
             tf.keras.layers.Dense(units=16, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rec_estimator')
 
         self.nr_users = nr_users
         self.nr_items = nr_items
 
-        self.constraint_weights = tf.Variable(initial_value=tf.random.normal([2 + nr_items]), name='constraint_weights')
+        # self.constraint_weights = tf.Variable(initial_value=tf.random.normal([4]), name='constraint_weights', constraint=lambda t: tf.clip_by_value(t, 0., 1.))
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
 
@@ -100,10 +104,15 @@ def constraint_satisfaction(model, likes, rec, sim):
     # Sim(u1, u2) & Likes(u1, m) => Rec(u2, m)
     sim = tf.tile(tf.expand_dims(sim, axis=-1), [1, 1, likes.shape[1]])
     likes = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
-    rec = tf.tile(tf.expand_dims(rec, axis=0), [sim.shape[0], 1, 1])
+    rec = tf.tile(tf.expand_dims(rec, axis=1), [1, sim.shape[0], 1])
+    # rec2 = tf.tile(tf.expand_dims(rec, axis=0), [sim.shape[0], 1, 1])
 
-    wff3 = Forall(Implies(And(sim, likes), rec), axis=[0,1])
-    res = tf.concat([wff1, wff2, wff3], axis=0)
+    wff3 = tf.expand_dims(Forall(Implies(And(sim, likes), rec)), axis=0)
+    wff4 = tf.expand_dims(Forall(Implies(And(sim, Not(likes)), Not(rec))), axis=0)
+    # tmp = Forall(Implies(And(sim, likes), rec2), axis=[0,1])
+    # print(wff3.numpy().mean(), tmp.numpy().mean())
+
+    res = tf.concat([wff1, wff2, wff3, wff4], axis=0)
 
     return res
 
@@ -133,11 +142,10 @@ def supervised_target_loss(target, fnn):
 def supervised_map_loss(map, fnn):
     return supervised_loss(fnn['likes'], map['likes']) + supervised_loss(fnn['rec'], map['rec'])
 
-def ltn_loss(model, target, map, fnn):
-    regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 * tf.linalg.norm(model.constraint_weights)
-    cost = regularization + supervised_target_loss(target, fnn) / 2 + supervised_map_loss(map, fnn) / 2
-    cost += tf.reduce_sum(model.constraint_weights *
-                          (constraint_satisfaction(model, target['likes'], target['rec'], target['sim']) - constraint_satisfaction(model, map['likes'], map['rec'], map['sim'])))
+def ltn_loss(model, target, fnn):
+    regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 # * tf.linalg.norm(model.constraint_weights)
+    cost = regularization + supervised_target_loss(target, fnn) / 2 # + supervised_map_loss(map, fnn) / 2
+    cost += (tf.reduce_sum((1 - constraint_satisfaction(model, fnn['likes'], fnn['rec'], fnn['sim']))))
     return cost
 
 def train_dtn(model, input):
@@ -146,12 +154,12 @@ def train_dtn(model, input):
 
     embed_user = tf.nn.embedding_lookup(model.user_embedding, users)
 
-    target = {'likes': rated, 'rec': tf.zeros_like(rated), 'sim': model.calc_user_sim(embed_user, len(users))}
+    target = {'likes': rated }
     # user_cross = tf.convert_to_tensor([x for x in itertools.permutations(users.numpy(), 2)])
     with tf.GradientTape() as tape:
         fnn = model(users)
-        map_solution = map_inference(model, fnn)
-        loss = ltn_loss(model, target, map_solution, fnn)
+        # map_solution = map_inference(model, fnn)
+        loss = ltn_loss(model, target, fnn)
     grads = tape.gradient(loss, model.trainable_variables)
     return loss, grads
 
@@ -167,7 +175,7 @@ class NLR(BaseModel):
         self.epochs = kwargs.get('epochs', 10)
         self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim)
         self.batch_size = kwargs.get('batch_size', 128)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
 
     @staticmethod
     def transform_train_data(record):
@@ -213,7 +221,7 @@ class NLR(BaseModel):
         user_ids = tf.convert_to_tensor(user_ids)
         predictions = self.model(user_ids)
         # inference = map_inference(self.model, predictions)
-        tmp = tf.reshape(predictions['rec'], [self.nr_items, len(user_ids)])
+        tmp = tf.reshape(predictions['likes'], [self.nr_items, len(user_ids)])
         return tf.transpose(tmp).numpy()
 
     def get_name(self) -> str:

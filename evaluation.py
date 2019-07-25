@@ -172,9 +172,11 @@ class Evaluation:
         return metrics
 
 
-    def evaluate(self, model: BaseModel):
+    def evaluate(self, model: BaseModel, batches_to_evaluate = None):
         nr_batches = 0
         dataset = load_dataset(self.dataset, 'test').batch(128)
+        if batches_to_evaluate is not None:
+            dataset = dataset.take(batches_to_evaluate)
 
         metrics = dict()
 
