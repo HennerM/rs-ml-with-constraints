@@ -1,9 +1,7 @@
 import numpy as np
 import tensorflow as tf
-import itertools
 
 from models.BaseModel import BaseModel
-from utils.common import printProgressBar
 import time
 
 
@@ -12,25 +10,21 @@ class NeuralLogicRec(tf.keras.Model):
         super(tf.keras.Model, self).__init__()
         self.embedding_dim = embedding_dim
 
-        self.user_transform = tf.keras.layers.Dense(units=self.embedding_dim, activation='relu')
-        self.item_transform = tf.keras.layers.Dense(units=self.embedding_dim, activation='relu')
-
         self.user_embedding = tf.Variable(initial_value=tf.random.normal([nr_users, embedding_dim]), name='embedding_user')
         self.item_embedding = tf.Variable(initial_value=tf.random.normal([nr_items, embedding_dim]), name='embedding_item')
 
         self.likes_estimator = tf.keras.Sequential([
             tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=16, activation='relu'),
-            tf.keras.layers.Dense(units=16, activation='relu'),
-            tf.keras.layers.Dense(units=16, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
 
         self.nr_users = nr_users
         self.nr_items = nr_items
 
-        # self.constraint_weights = tf.Variable(initial_value=tf.random.normal([4]), name='constraint_weights', constraint=lambda t: tf.clip_by_value(t, 0., 1.))
+        self.constraint_weights = tf.Variable(initial_value=tf.random.normal([3 * nr_items]), name='constraint_weights')
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
-
 
 
     def calc_user_sim(self, embed_user, nr_users):
@@ -56,10 +50,6 @@ def sim(a, b):
 def supervised_loss(predictions, target):
     return tf.keras.losses.mean_squared_error(target, predictions)
 
-def negative_mse(network_output, y_likes, y_rec):
-    return tf.reduce_sum(tf.math.negative(supervised_loss(network_output['likes'], y_likes) + supervised_loss(network_output['rec'], y_rec))) # TODO add rec loss
-
-
 def Implies(a, b):
     return tf.minimum(1., 1 - a + b)
 
@@ -83,50 +73,25 @@ def constraint_satisfaction(model, likes, sim):
     sim = tf.tile(tf.expand_dims(sim, axis=-1), [1, 1, likes.shape[1]])
     likes_u1 = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
     likes_u2 = tf.tile(tf.expand_dims(likes, axis=1), [1, sim.shape[0], 1])
-    # rec2 = tf.tile(tf.expand_dims(rec, axis=0), [sim.shape[0], 1, 1])
 
-    wff3 = tf.expand_dims(Forall(Implies(And(sim, likes_u1), likes_u2)), axis=0)
-    wff4 = tf.expand_dims(Forall(Implies(And(sim, Not(likes_u1)), Not(likes_u2))), axis=0)
-    wff5 = tf.expand_dims(Forall(Implies(And(Not(sim), likes_u1), Not(likes_u2))), axis=0)
-    # tmp = Forall(Implies(And(sim, likes), rec2), axis=[0,1])
-    # print(wff3.numpy().mean(), tmp.numpy().mean())
+    wff3 = Forall(Implies(And(sim, likes_u1), likes_u2), axis=[0,1])
+    wff4 = Forall(Implies(And(sim, Not(likes_u1)), Not(likes_u2)), axis=[0,1])
+    wff5 = Forall(Implies(And(Not(sim), likes_u1), Not(likes_u2)), axis=[0,1])
 
     res = tf.concat([wff3, wff4, wff5], axis=0)
 
     return res
 
-def map_inference(model, network_output, convergence_e = 1e-3):
-    convergence_e = tf.convert_to_tensor(convergence_e)
-    y_likes =  tf.Variable(initial_value=tf.random.truncated_normal(network_output['likes'].shape, mean=.5,stddev=.25), constraint=lambda t: tf.clip_by_value(t, 0., 1.))
-    y_recs = tf.Variable(initial_value=tf.random.truncated_normal(network_output['rec'].shape, mean=.5, stddev=.25), constraint=lambda t: tf.clip_by_value(t, 0., 1.))
-    y_sim = tf.Variable(initial_value=tf.random.truncated_normal(network_output['sim'].shape, mean=.5, stddev=.25), constraint=lambda t: tf.clip_by_value(t, 0., 1.))
-
-    previous_loss = None
-    for i in range(2048):
-        with tf.GradientTape() as tape:
-            l = tf.math.negative(negative_mse(network_output, y_likes, y_recs) + tf.reduce_sum(model.constraint_weights * constraint_satisfaction(model, y_likes, y_recs, y_sim)))
-        grad = tape.gradient(l, [y_likes, y_recs])
-        model.optimizer.apply_gradients(zip(grad, [y_likes, y_recs]))
-        # if i % 10 == 0:
-            # print("MAP Loss at step {}: {:.4f}".format(i, l.numpy()), end='\r')
-        if previous_loss is not None and tf.abs(previous_loss - l) < convergence_e:
-            break
-        previous_loss = l
-
-    return {'likes': y_likes, 'rec': y_recs, 'sim': y_sim}
 
 def supervised_target_loss(target, fnn):
     num_ratings = tf.reduce_sum(target['mask'])
     num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
     return tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['mask'])) / num_ratings
 
-def supervised_map_loss(map, fnn):
-    return supervised_loss(fnn['likes'], map['likes']) + supervised_loss(fnn['rec'], map['rec'])
-
 def ltn_loss(model, target, fnn):
     regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 # * tf.linalg.norm(model.constraint_weights)
-    cost = regularization + supervised_target_loss(target, fnn) / 2 # + supervised_map_loss(map, fnn) / 2
-    cost += (tf.reduce_sum((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim']))))
+    cost = regularization + supervised_target_loss(target, fnn)
+    cost += (tf.reduce_sum(tf.abs(model.constraint_weights * (1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'])))))
     return cost
 
 def train_dtn(model, input):
@@ -139,7 +104,6 @@ def train_dtn(model, input):
     # user_cross = tf.convert_to_tensor([x for x in itertools.permutations(users.numpy(), 2)])
     with tf.GradientTape() as tape:
         fnn = model(users)
-        # map_solution = map_inference(model, fnn)
         loss = ltn_loss(model, target, fnn)
     grads = tape.gradient(loss, model.trainable_variables)
     return loss, grads

@@ -3,9 +3,7 @@ import multiprocessing
 from functools import lru_cache
 from typing import List
 
-from models import BaseModel
-from models.ConstraintAutoRec import ConstraintAutoRec
-from utils.common import movie_lens, load_dataset, printProgressBar
+from common import load_dataset, printProgressBar
 import numpy as np
 import pandas as pd
 import time
@@ -173,8 +171,30 @@ class Evaluation:
 
         return metrics
 
+    def evaluate_single_thread(self, model, mode = 'test', max_nr_batches = None):
+        metrics = dict()
+        nr_batches = 0
+        dataset = load_dataset(self.dataset, mode).batch(128)
+        for batch in dataset:
+            x = batch['x']
+            user_ids = batch['user_id']
+            predictions = model.predict(x, user_ids)
+            print('Batch nr {} predicted'.format(nr_batches + 1))
 
-    def evaluate(self, model: BaseModel, mode = 'test', max_nr_batches = None):
+            result = self.calc_recommendation_metrics(predictions, batch)
+            nr_batches += 1
+            for k in result:
+                metrics.setdefault(k, 0)
+                metrics[k] += result[k]
+
+        metrics = {key: (v / nr_batches) for (key, v) in metrics.items()}
+        metrics['name'] = model.get_name()
+        for k, v in model.get_params().items():
+            metrics[k] = v
+
+        return metrics
+
+    def evaluate(self, model, mode = 'test', max_nr_batches = None):
         nr_batches = 0
         dataset = load_dataset(self.dataset, mode).batch(128)
 
@@ -240,10 +260,10 @@ def work_on_batch(input_queue, output_queue, evaluation):
         input_queue.task_done()
 
 
-
-if __name__ == "__main__":
-    ev = Evaluation(movie_lens)
-    model = ConstraintAutoRec(movie_lens['dimensions'], epochs=5)
-    # model.train(load_dataset(movie_lens, 'train'), movie_lens['train']['records'])
-    ev.evaluate(model)
+#
+# if __name__ == "__main__":
+#     ev = Evaluation(movie_lens)
+#     model = ConstraintAutoRec(movie_lens['dimensions'], epochs=5)
+#     # model.train(load_dataset(movie_lens, 'train'), movie_lens['train']['records'])
+#     ev.evaluate(model)
 
