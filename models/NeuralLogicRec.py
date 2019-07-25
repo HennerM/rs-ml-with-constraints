@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-# from models.BaseModel import BaseModel
+from models.BaseModel import BaseModel
 import time
 
 
@@ -17,7 +17,6 @@ class NeuralLogicRec(tf.keras.Model):
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
 
         self.rated_estimator = tf.keras.Sequential([
@@ -25,6 +24,12 @@ class NeuralLogicRec(tf.keras.Model):
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=32, activation='relu'),
             tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rated_estimator')
+
+        self.popular_estimator = tf.keras.Sequential([
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=32, activation='relu'),
+            tf.keras.layers.Dense(units=1, activation='sigmoid')], name='popular_estimator')
 
         self.nr_users = nr_users
         self.nr_items = nr_items
@@ -47,7 +52,9 @@ class NeuralLogicRec(tf.keras.Model):
         estimated_likes = tf.squeeze(self.likes_estimator(input), axis=-1)
         estimated_rated = tf.squeeze(self.rated_estimator(input), axis=-1)
 
-        return {'likes': estimated_likes, 'sim': self.calc_user_sim(embed_user, len(users)), 'rated': estimated_rated}
+        popular = tf.squeeze(self.popular_estimator(self.item_embedding), axis=-1)
+
+        return {'likes': estimated_likes, 'sim': self.calc_user_sim(embed_user, len(users)), 'rated': estimated_rated, 'popular': popular}
 
 def sim(a, b):
     cos_similarity = tf.keras.losses.cosine_similarity(a, b,axis=-1)
@@ -80,7 +87,7 @@ def combine_constraints(*constraints):
     return tf.concat([normalize_shape(x) for x in constraints], axis=0)
 
 
-def constraint_satisfaction(model, likes, sim, rated):
+def constraint_satisfaction(model, likes, sim, rated, popular):
 
     # Rec(u, m) => Likes(u,m)
     # wff1 = tf.expand_dims(Forall(Implies(rec, likes)), axis=0)
@@ -101,7 +108,14 @@ def constraint_satisfaction(model, likes, sim, rated):
     # Likes => Rated
     wff6 = Forall(Implies(likes, rated))
 
-    res = combine_constraints(wff3, wff4, wff5, wff6)
+    popular_rep = tf.tile(tf.expand_dims(popular, axis=0), [likes.shape[0], 1])
+    # Rated(u,m) => Popular(m)
+    wff7 = Forall(Implies(rated, popular_rep))
+    # Popular(m) => ~Likes(u,m)
+    wff8 = Forall(Implies(popular_rep, Not(likes)))
+
+
+    res = combine_constraints(wff3, wff4, wff5, wff6, wff7, wff8)
     return res
 
 
@@ -115,7 +129,7 @@ def supervised_target_loss(target, fnn):
 def ltn_loss(model, target, fnn):
     regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 # * tf.linalg.norm(model.constraint_weights)
     cost = regularization + supervised_target_loss(target, fnn)
-    cost += (tf.reduce_sum(tf.abs((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'], fnn['rated'])))))
+    cost += (tf.reduce_sum(tf.abs((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'], fnn['rated'], fnn['popular'])))))
     return cost
 
 def train_dtn(model, input):
