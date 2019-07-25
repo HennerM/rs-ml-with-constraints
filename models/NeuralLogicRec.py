@@ -37,7 +37,7 @@ class NeuralLogicRec(tf.keras.Model):
 
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
-
+    @tf.function
     def calc_user_sim(self, embed_user, nr_users):
         users_1 = tf.tile(tf.expand_dims(embed_user, axis=1), [1, nr_users, 1])
         users_2 = tf.tile(tf.expand_dims(embed_user, axis=0), [nr_users,1, 1])
@@ -56,26 +56,32 @@ class NeuralLogicRec(tf.keras.Model):
 
         return {'likes': estimated_likes, 'sim': self.calc_user_sim(embed_user, len(users)), 'rated': estimated_rated, 'popular': popular}
 
+@tf.function
 def sim(a, b):
     cos_similarity = tf.keras.losses.cosine_similarity(a, b,axis=-1)
     return ( 1 + cos_similarity) / 2
 
+@tf.function
 def supervised_loss(predictions, target):
     return tf.keras.losses.mean_squared_error(target, predictions)
 
+@tf.function
 def Implies(a, b):
     return tf.minimum(1., 1 - a + b)
 
+@tf.function
 def Not(wff):
     return 1 - wff
 
+@tf.function
 def Forall(wff, axis=None):
     return tf.reduce_mean(wff, axis=axis)
 
+@tf.function
 def And(a, b):
     return tf.maximum(0.0, a + b - 1)
 
-
+@tf.function
 def combine_constraints(*constraints):
     def normalize_shape(tensor):
         if len(tensor.shape) == 1:
@@ -86,7 +92,7 @@ def combine_constraints(*constraints):
             return tf.reshape(tensor, [-1])
     return tf.concat([normalize_shape(x) for x in constraints], axis=0)
 
-
+@tf.function
 def constraint_satisfaction(model, likes, sim, rated, popular):
 
     # Rec(u, m) => Likes(u,m)
@@ -118,7 +124,7 @@ def constraint_satisfaction(model, likes, sim, rated, popular):
     res = combine_constraints(wff1, wff2, wff3, wff4, wff5, wff6)
     return res
 
-
+@tf.function
 def supervised_target_loss(target, fnn):
     num_ratings = tf.reduce_sum(target['rated'])
     num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
@@ -126,6 +132,7 @@ def supervised_target_loss(target, fnn):
     rated_loss = tf.keras.losses.mean_squared_error(target['rated'], fnn['rated'])
     return likes_loss + rated_loss
 
+@tf.function
 def ltn_loss(model, target, fnn):
     regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 # * tf.linalg.norm(model.constraint_weights)
     cost = regularization + supervised_target_loss(target, fnn)

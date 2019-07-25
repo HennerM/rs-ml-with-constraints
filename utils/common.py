@@ -33,7 +33,7 @@ ml_small = {
         'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/train.tfrecords']
     },
     'test': {
-        'records': 610,
+        'records': 222,
         'filenames': '/home/ec2-user/SageMaker/data/MovieLens/test.tfrecords'
     },
     'item_features': '/home/ec2-user/SageMaker/data/MovieLens/movie_features.npz',

@@ -21,22 +21,23 @@ class Evaluation:
         loaded_features = np.load(dataset['item_features'], allow_pickle=True)
         self.item_features = loaded_features['features']
         self.known_frequencies = loaded_features['known_frequency']
-        nr_processes = multiprocessing.cpu_count() - 2
-        self.input_q = multiprocessing.JoinableQueue()
-        self.output_q = multiprocessing.JoinableQueue()
-        self.processes = [multiprocessing.Process(target=work_on_batch, args=(self.input_q, self.output_q, self)) for i in range(nr_processes)]
-        for i in range(nr_processes):
-            self.processes[i].start()
+        self.nr_samples = dataset['test']['records']
+#         nr_processes = multiprocessing.cpu_count() - 2
+#         self.input_q = multiprocessing.JoinableQueue()
+#         self.output_q = multiprocessing.JoinableQueue()
+#         self.processes = [multiprocessing.Process(target=work_on_batch, args=(self.input_q, self.output_q, self)) for i in range(nr_processes)]
+#         for i in range(nr_processes):
+#             self.processes[i].start()
 
 
-    def __del__(self):
-        for p in self.processes:
-            self.input_q.put(None)
+#     def __del__(self):
+#         for p in self.processes:
+#             self.input_q.put(None)
             # p.terminate()
 
     @staticmethod
     def calculate_MSE(predictions, actual, mask):
-        nr_ratings = len(mask.nonzero()[0])
+        nr_ratings = mask.sum()
         error = np.sum(np.square(predictions - actual) * mask)
         return error / nr_ratings
 
@@ -50,31 +51,29 @@ class Evaluation:
 
     
     @staticmethod
-    def calculate_accuracy(predictions, actual, mask):
+    def calculate_accuracy(pred, actual, mask):
         #   (tp + tn) / (tp + tn + fp + fn)
-        pred = predictions > 0.5
-        tp = (pred * actual * mask).sum()
-        tn = ((~pred) * (~actual) * mask).sum()
-        return (tp + tn) / mask.sum()
+        tp = (pred * actual * mask).sum(axis=1)
+        tn = ((~pred) * (~actual) * mask).sum(axis=1)
+        return (tp + tn) / mask.sum(axis=1)
 
     @staticmethod
-    def calculate_precision(predictions, actual, mask):
+    def calculate_precision(pred, actual, mask):
         #   tp / (tp + fp)
-        pred = predictions > 0.5
-        tp = (pred * actual * mask).sum()
-        fp = (pred * (~actual) * mask).sum()
-        if tp + fp == 0:
-            return 0
-        else:
-            return tp / (tp + fp)
+        tp = (pred * actual * mask).sum(axis=1)
+        fp = (pred * (~actual) * mask).sum(axis=1)
+        denom = (tp + fp)
+        not_null = np.where(denom)
+        return tp[not_null] / denom[not_null]
 
     @staticmethod
-    def calculate_recall(predictions, actual, mask):
+    def calculate_recall(pred, actual, mask):
         #   tp / (tp + fn)
-        pred = predictions > 0.5
-        tp = (pred * actual * mask).sum()
-        fn = ((~pred) * actual * mask).sum()
-        return tp / (tp + fn)
+        tp = (pred * actual * mask).sum(axis=1)
+        fn = ((~pred) * actual * mask).sum(axis=1)
+        denom =  (tp + fn)
+        not_null = np.where(denom)
+        return tp[not_null] / denom[not_null]
 
     @lru_cache(maxsize=4096)
     def item_sim(self, item_id, other_id):
@@ -132,7 +131,7 @@ class Evaluation:
                 epd_values.append(running_sum / (nr_recs * nr_items_considered))
 
 
-        return sum(epd_values) / len(epd_values)
+        return epd_values
 
     @staticmethod
     def precision_at_n(recommendations, x_test, n):
@@ -155,7 +154,7 @@ class Evaluation:
         for u in range(recommendations.shape[0]):
             ap[u] = Evaluation.average_precision(recommendations[u], x_test[u], n)
 
-        return np.mean(ap)
+        return ap
 
     def calc_recommendation_metrics(self, predictions, batch):
         x = batch['x'].numpy()
@@ -165,29 +164,76 @@ class Evaluation:
         top_5 = Evaluation.recommend_top_n(predictions, 5, x)
         top_10 = Evaluation.recommend_top_n(predictions, 10, x)
 
+        pred_true = predictions > 0.5
+        
         metrics = dict()
-        metrics['accuracy'] = Evaluation.calculate_accuracy(predictions, x_test, mask_test)
-        metrics['precision'] = Evaluation.calculate_precision(predictions, x_test, mask_test)
-        metrics['recall'] = Evaluation.calculate_recall(predictions, x_test, mask_test)
-        metrics['map@1'] = Evaluation.mean_average_precision(top_5, x_test, 1)
-        metrics['map@5'] = Evaluation.mean_average_precision(top_5, x_test, 5)
-        metrics['map@10'] = Evaluation.mean_average_precision(top_10, x_test, 10)
-        # metrics['mse'] = Evaluation.calculate_MSE(predictions, x_test, mask_test)
-        metrics['diversity@5'] = self.diversity_for_list(top_5).mean()
-        metrics['diversity@10'] = self.diversity_for_list(top_10).mean()
-        metrics['epc@5'] = self.expected_popularity_complement(top_5).mean()
-        metrics['epc@10'] = self.expected_popularity_complement(top_10).mean()
+        metrics['accuracy'] = Evaluation.calculate_accuracy(pred_true, x_test, mask_test).tolist()
+        metrics['precision'] = Evaluation.calculate_precision(pred_true, x_test, mask_test).tolist()
+        metrics['recall'] = Evaluation.calculate_recall(pred_true, x_test, mask_test).tolist()
+        metrics['map@1'] = Evaluation.mean_average_precision(top_5, x_test, 1).tolist()
+        metrics['map@5'] = Evaluation.mean_average_precision(top_5, x_test, 5).tolist()
+        metrics['map@10'] = Evaluation.mean_average_precision(top_10, x_test, 10).tolist()
+        metrics['diversity@5'] = self.diversity_for_list(top_5).tolist()
+        metrics['diversity@10'] = self.diversity_for_list(top_10).tolist()
+        metrics['epc@5'] = self.expected_popularity_complement(top_5).tolist()
+        metrics['epc@10'] = self.expected_popularity_complement(top_10).tolist()
         metrics['epd@5'] = self.expected_profile_distance(top_5, x_test)
-
         return metrics
 
-    def evaluate_single_thread(self, model, mode = 'test', max_nr_batches = None):
+    @staticmethod
+    def init_metrics():
         metrics = dict()
+        metrics['accuracy'] = list()
+        metrics['precision'] = list()
+        metrics['recall'] = list()
+        metrics['map@1'] = list()
+        metrics['map@5'] = list()
+        metrics['map@10'] = list()
+        metrics['diversity@5'] = list()
+        metrics['diversity@10'] =list()
+        metrics['epc@5'] = list()
+        metrics['epc@10'] = list()
+        metrics['epd@5'] = list()
+        return metrics
+    
+    @staticmethod
+    def update_metrics(metrics, curr):
+        metrics['accuracy'] += curr['accuracy']
+        metrics['precision'] += curr['precision']
+        metrics['recall'] += curr['recall']
+        metrics['map@1'] += curr['map@1']
+        metrics['map@5'] += curr['map@5']
+        metrics['map@10'] += curr['map@10']
+        metrics['diversity@5'] += curr['diversity@5']
+        metrics['diversity@10'] += curr['diversity@10']
+        metrics['epc@5']+= curr['epc@5']
+        metrics['epc@10'] += curr['epc@10']
+        metrics['epd@5'] += curr['epd@5']
+        return metrics
+    
+    @staticmethod
+    def collect_metrics(metrics):
+        metrics['accuracy'] = np.mean(metrics['accuracy'])
+        metrics['precision'] = np.mean(metrics['precision'])
+        metrics['recall'] = np.mean(metrics['recall'])
+        metrics['map@1'] = np.mean(metrics['map@1'])
+        metrics['map@5'] = np.mean(metrics['map@5'])
+        metrics['map@10'] = np.mean(metrics['map@10'])
+        metrics['diversity@5'] = np.mean(metrics['diversity@5'])
+        metrics['diversity@10'] = np.mean(metrics['diversity@10'])
+        metrics['epc@5']=  np.mean(metrics['epc@5'])
+        metrics['epc@10'] = np.mean(metrics['epc@10'])
+        metrics['epd@5'] = np.mean(metrics['epd@5'])
+        return metrics
+    
+    def evaluate_single_thread(self, model, mode = 'test', max_nr_batches = None):
+        metrics = Evaluation.init_metrics()
         nr_batches = 0
-        dataset = load_dataset(self.dataset, mode).batch(512)
+        batch_size = 128
+        dataset = load_dataset(self.dataset, mode).batch(batch_size)
         if max_nr_batches is not None:
             dataset = dataset.take(max_nr_batches)
-        
+            
         for batch in dataset:
             x = batch['x']
             user_ids = batch['user_id']
@@ -196,11 +242,11 @@ class Evaluation:
 
             result = self.calc_recommendation_metrics(predictions, batch)
             nr_batches += 1
-            for k in result:
-                metrics.setdefault(k, 0)
-                metrics[k] += result[k]
+            
+            metrics = Evaluation.update_metrics(metrics, result)
 
-        metrics = {key: (v / nr_batches) for (key, v) in metrics.items()}
+        metrics = Evaluation.collect_metrics(metrics)
+            
         metrics['name'] = model.get_name()
         for k, v in model.get_params().items():
             metrics[k] = v
