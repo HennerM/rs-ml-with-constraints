@@ -7,14 +7,12 @@ import time
 
 
 class NeuralLogicRec(tf.keras.Model):
-    def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers):
+    def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers, nr_item_samples):
         super(tf.keras.Model, self).__init__()
         self.embedding_dim = embedding_dim
 
         self.user_embedding = tf.Variable(initial_value=tf.random.normal([nr_users, embedding_dim]), name='embedding_user')
-        self.item_embedding = tf.Variable(initial_value=tf.random.normal([nr_items, embedding_dim]), name='embedding_item')
-
-        
+        self.item_embedding = tf.Variable(initial_value=tf.random.normal([nr_items, embedding_dim]), name='embedding_item') 
         
         self.likes_estimator = tf.keras.Sequential(
             [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] + 
@@ -30,12 +28,19 @@ class NeuralLogicRec(tf.keras.Model):
 
         self.nr_users = nr_users
         self.nr_items = nr_items
+        self.nr_item_samples = nr_item_samples
 
     @tf.function
-    def calc_user_sim(self, embed_user, nr_users):
-        users_1 = tf.tile(tf.expand_dims(embed_user, axis=1), [1, nr_users, 1])
-        users_2 = tf.tile(tf.expand_dims(embed_user, axis=0), [nr_users,1, 1])
-        return sim(users_1, users_2)
+    def calc_embedding_sim(self, embed_a, embed_b):
+        a = tf.tile(tf.expand_dims(embed_a, axis=1), [1, len(embed_b), 1])
+        b = tf.tile(tf.expand_dims(embed_b, axis=0), [len(embed_a),1, 1])
+        return sim(a, b)
+    
+    @tf.function
+    def item_sim(self, items_a, items_b):
+        a = tf.nn.embedding_lookup(self.item_embedding, items_a)
+        b = tf.nn.embedding_lookup(self.item_embedding, items_b)
+        return sim(a, b)
 
     def call(self, users):
         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
@@ -48,12 +53,15 @@ class NeuralLogicRec(tf.keras.Model):
 
         popular = tf.squeeze(self.popular_estimator(self.item_embedding), axis=-1)
 
-        return {'likes': estimated_likes, 'sim': self.calc_user_sim(embed_user, len(users)), 'rated': estimated_rated, 'popular': popular}
+        return {'likes': estimated_likes, 
+                'sim': self.calc_embedding_sim(embed_user, embed_user),
+                'rated': estimated_rated, 
+                'popular': popular,
+                 }
 
 @tf.function
 def sim(a, b):
-    cos_similarity = tf.keras.losses.cosine_similarity(a, b,axis=-1)
-    return ( 1 + cos_similarity) / 2
+    return tf.keras.losses.cosine_similarity(a, b,axis=-1)
 
 @tf.function
 def supervised_loss(predictions, target):
@@ -87,15 +95,30 @@ def combine_constraints(*constraints):
     return tf.concat([normalize_shape(x) for x in constraints], axis=0)
 
 @tf.function
-def constraint_satisfaction(model, likes, sim, rated, popular):
+def item_cf(model, likes):
+    
+    item_sample_a = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
+    item_sample_b = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
+    item_sim = model.item_sim(item_sample_a, item_sample_b)
+    sim = tf.minimum(0.0, item_sim)
+    anti_sim = tf.abs(tf.maximum(0.0, item_sim))
+    likes_1_sample = tf.gather(likes, item_sample_a, axis=1)
+    likes_2_sample = tf.gather(likes, item_sample_b, axis=1)
+    # Likes(u, m1) & Sim(m1, m2) => Likes(u, m2)
+    a = Implies(And(likes_1_sample, sim), likes_2_sample)
+    # ~Likes(u, m1) & Sim(m1, m2) => ~Likes(u, m2)
+    b = Implies(And(Not(likes_1_sample), sim), Not(likes_2_sample))
+    # Likes(u, m1) & AntiSim(m1, m2) => ~Likes(u, m2)
+    c = Implies(And(likes_1_sample, anti_sim), Not(likes_2_sample))
+    return Forall(And(a, And(b, c)))
 
-    # Rec(u, m) => Likes(u,m)
-    # wff1 = tf.expand_dims(Forall(Implies(rec, likes)), axis=0)
-    # Likes(u, m) => ~Rec(m)
-    # wff2 = tf.expand_dims(Forall(Implies(likes, Not(rec))), axis=0)
+@tf.function
+def constraint_satisfaction(model, likes, cos_sim, rated, popular):
 
-
-    sim = tf.tile(tf.expand_dims(sim, axis=-1), [1, 1, likes.shape[1]])
+    cos_sim = tf.tile(tf.expand_dims(cos_sim, axis=-1), [1, 1, likes.shape[1]])
+    
+    sim = tf.minimum(0.0, cos_sim)
+    anti_sim = tf.abs(tf.maximum(0.0, cos_sim))
     likes_u1 = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
     likes_u2 = tf.tile(tf.expand_dims(likes, axis=1), [1, sim.shape[0], 1])
     # Sim(u1, u2) & Likes(u1, m) => likes(u2, m)
@@ -103,7 +126,7 @@ def constraint_satisfaction(model, likes, sim, rated, popular):
     # Sim(u1, u2) & ~Likes(u1, m) => ~likes(u2,m)
     wff2 = Forall(Implies(And(sim, Not(likes_u1)), Not(likes_u2)))
     # ~Sim(u1,u2) & Likes(u1,m) => ~likes(u2,m)
-    wff3 = Forall(Implies(And(Not(sim), likes_u1), Not(likes_u2)))
+    wff3 = Forall(Implies(And(anti_sim, likes_u1), Not(likes_u2)))
 
     # Likes => Rated
     wff4 = Forall(Implies(likes, rated))
@@ -113,12 +136,12 @@ def constraint_satisfaction(model, likes, sim, rated, popular):
     wff5 = Forall(Implies(rated, popular_rep))
     # ~Popular(m) => Likes(u,m)
     wff6 = Forall(Implies(Not(popular_rep), likes))
-
+ 
     wff7 = Forall(Implies(And(Not(rated), likes), likes))
+    wff8 = Forall(Not(popular))
     
-    wff8 = Forall(likes)
-    wff9 = Forall(Not(popular))
-
+    wff9 = item_cf(model, likes)
+    
     res = combine_constraints(wff1, wff2, wff3, wff4, wff5, wff6, wff7, wff8, wff9)
     return res
 
@@ -148,18 +171,19 @@ def train_dtn(model, users, rated, mask):
 
 class NLR(BaseModel):
 
-
     def __init__(self, num_users, num_items, **kwargs):
         super().__init__(num_items, **kwargs)
         self.nr_users = num_users
         self.nr_items = num_items
-        self.latent_dim = kwargs.get('latent_dim', 128)
         self.embedding_dim = kwargs.get('embedding_dim', 16)
         self.nr_hidden_layers = kwargs.get('nr_hidden_layers', 4)
         self.epochs = kwargs.get('epochs', 10)
-        self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim, self.nr_hidden_layers)
         self.batch_size = kwargs.get('batch_size', 16)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
+        self.epochs_trained = 0
+        self.nr_item_samples = kwargs.get('nr_item_samples', 512)
+        
+        self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim, self.nr_hidden_layers, self.nr_item_samples)
 
     @staticmethod
     def transform_train_data(record):
@@ -181,7 +205,6 @@ class NLR(BaseModel):
             epcoh_start = time.time()
             for data in dataset:
                 users = data['user_id']
-#                 print(users)
                 rated = tf.cast(data['x'], tf.float32)
                 mask =  tf.cast(data['mask'], tf.float32)
                 
@@ -202,6 +225,7 @@ class NLR(BaseModel):
                           .format(i, step, tf.reduce_mean(loss_value).numpy(), diff), end='\r')
                 step += 1
             print()
+            self.epochs_trained += 1
 
 
     def save(self, path):
@@ -225,5 +249,5 @@ class NLR(BaseModel):
 
     def get_params(self) -> dict:
         items = np.arange(self.nr_items)
-        param_names = ['latent_dim', 'epochs', 'batch_size', 'nr_hidden_layers']
+        param_names = ['embedding_dim', 'epochs_trained', 'batch_size', 'nr_hidden_layers', 'nr_item_samples']
         return  {param: (self.__dict__[param]) for param in param_names}
