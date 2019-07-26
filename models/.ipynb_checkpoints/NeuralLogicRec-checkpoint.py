@@ -7,33 +7,26 @@ import time
 
 
 class NeuralLogicRec(tf.keras.Model):
-    def __init__(self, nr_users, nr_items, embedding_dim):
+    def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers):
         super(tf.keras.Model, self).__init__()
         self.embedding_dim = embedding_dim
 
         self.user_embedding = tf.Variable(initial_value=tf.random.normal([nr_users, embedding_dim]), name='embedding_user')
         self.item_embedding = tf.Variable(initial_value=tf.random.normal([nr_items, embedding_dim]), name='embedding_item')
 
-        self.likes_estimator = tf.keras.Sequential([
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
+        
+        
+        self.likes_estimator = tf.keras.Sequential(
+            [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] + 
+            [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
 
-        self.rated_estimator = tf.keras.Sequential([
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rated_estimator')
+        self.rated_estimator = tf.keras.Sequential(
+            [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] + 
+            [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rated_estimator')
 
-        self.popular_estimator = tf.keras.Sequential([
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=32, activation='relu'),
-            tf.keras.layers.Dense(units=1, activation='sigmoid')], name='popular_estimator')
+        self.popular_estimator = tf.keras.Sequential(
+            [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] + 
+            [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='popular_estimator')
 
         self.nr_users = nr_users
         self.nr_items = nr_items
@@ -119,12 +112,14 @@ def constraint_satisfaction(model, likes, sim, rated, popular):
     # Rated(u,m) => Popular(m)
     wff5 = Forall(Implies(rated, popular_rep))
     # ~Popular(m) => Likes(u,m)
-#     wff6 = Forall(Implies(popular_rep, Not(likes)))
     wff6 = Forall(Implies(Not(popular_rep), likes))
 
     wff7 = Forall(Implies(And(Not(rated), likes), likes))
+    
+    wff8 = Forall(likes)
+    wff9 = Forall(Not(popular))
 
-    res = combine_constraints(wff1, wff2, wff3, wff4, wff5, wff6, wff7)
+    res = combine_constraints(wff1, wff2, wff3, wff4, wff5, wff6, wff7, wff8, wff9)
     return res
 
 @tf.function
@@ -132,9 +127,8 @@ def supervised_target_loss(target, fnn):
     num_ratings = tf.reduce_sum(target['rated'])
     num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
     likes_loss =  tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['rated'])) / num_ratings
-    return likes_loss
-#     rated_loss = tf.keras.losses.mean_squared_error(target['rated'], fnn['rated'])
-#     return likes_loss + rated_loss
+    rated_loss = tf.keras.losses.mean_squared_error(target['rated'], fnn['rated'])
+    return likes_loss + rated_loss
 
 @tf.function
 def ltn_loss(model, target, fnn):
@@ -160,9 +154,10 @@ class NLR(BaseModel):
         self.nr_users = num_users
         self.nr_items = num_items
         self.latent_dim = kwargs.get('latent_dim', 128)
-        self.embedding_dim = kwargs.get('embedding_dim', 128)
+        self.embedding_dim = kwargs.get('embedding_dim', 16)
+        self.nr_hidden_layers = kwargs.get('nr_hidden_layers', 4)
         self.epochs = kwargs.get('epochs', 10)
-        self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim)
+        self.model = NeuralLogicRec(num_users, num_items, self.embedding_dim, self.nr_hidden_layers)
         self.batch_size = kwargs.get('batch_size', 16)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
 
@@ -192,7 +187,7 @@ class NLR(BaseModel):
                 
                 loss_value, grads = train_dtn(self.model, users, rated, mask)
                 self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-                # printProgressBar(step, nr_steps, 'Epoch {}, loss:  {:.3f}'.format(i, loss_value),length=80)
+                diff = time.time() - epcoh_start
                 if step % 10 == 0:
                     predictions = self.predict(rated, users)
                     train_accuracy = Evaluation.tf_calculate_accuracy(predictions, data['x'], data['mask'])
@@ -200,7 +195,6 @@ class NLR(BaseModel):
                     eval_mask = data['mask_test']
                     eval_accuracy = Evaluation.tf_calculate_accuracy(predictions, eval_x, eval_mask)
                     
-                    diff = time.time() - epcoh_start
                     print("\rEpoch #{} Loss at step {}: {:.4f}, time: {:.3f}. Train accuracy {:.3f}, Validation accuracy {:.3f}"
                           .format(i, step, tf.reduce_mean(loss_value).numpy(), diff, train_accuracy, eval_accuracy), end='\r')
                 else:
@@ -224,13 +218,12 @@ class NLR(BaseModel):
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         user_ids = tf.convert_to_tensor(user_ids)
         predictions = self.model(user_ids)
-        tmp = tf.reshape(predictions['likes'], [self.nr_items, len(user_ids)])
-        return tf.transpose(tmp).numpy()
+        return predictions['likes'].numpy()
 
     def get_name(self) -> str:
         return "NeuralLogicRec"
 
     def get_params(self) -> dict:
         items = np.arange(self.nr_items)
-        param_names = ['latent_dim', 'epochs', 'batch_size', ]
+        param_names = ['latent_dim', 'epochs', 'batch_size', 'nr_hidden_layers']
         return  {param: (self.__dict__[param]) for param in param_names}
