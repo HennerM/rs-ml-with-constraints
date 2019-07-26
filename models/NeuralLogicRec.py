@@ -42,6 +42,14 @@ class NeuralLogicRec(tf.keras.Model):
         b = tf.nn.embedding_lookup(self.item_embedding, items_b)
         return sim(a, b)
 
+    def predict(self, users):
+        embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
+        embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
+        expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
+        embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
+        input = tf.concat([embed_user_likes, embed_item], axis=-1)
+        return tf.squeeze(self.likes_estimator(input), axis=-1)
+
     def call(self, users):
         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
         embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
@@ -100,25 +108,34 @@ def item_cf(model, likes):
     item_sample_a = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
     item_sample_b = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
     item_sim = model.item_sim(item_sample_a, item_sample_b)
-    sim = tf.minimum(0.0, item_sim)
-    anti_sim = tf.abs(tf.maximum(0.0, item_sim))
+    sim = tf.maximum(0.0, item_sim)
+    anti_sim = tf.abs(tf.minimum(0.0, item_sim))
     likes_1_sample = tf.gather(likes, item_sample_a, axis=1)
     likes_2_sample = tf.gather(likes, item_sample_b, axis=1)
-    # Likes(u, m1) & Sim(m1, m2) => Likes(u, m2)
-    a = Implies(And(likes_1_sample, sim), likes_2_sample)
-    # ~Likes(u, m1) & Sim(m1, m2) => ~Likes(u, m2)
-    b = Implies(And(Not(likes_1_sample), sim), Not(likes_2_sample))
-    # Likes(u, m1) & AntiSim(m1, m2) => ~Likes(u, m2)
-    c = Implies(And(likes_1_sample, anti_sim), Not(likes_2_sample))
-    return Forall(And(a, And(b, c)))
+    # (Likes(u, m1) & Sim(m1, m2) => Likes(u, m2)) & (Likes(u, m2) & Sim(m1, m2) => Likes(u, m1)
+    a = Forall(And(
+        Implies(And(likes_1_sample, sim), likes_2_sample),
+        Implies(And(likes_2_sample, sim), likes_1_sample)
+    ))
+    # (~Likes(u, m1) & Sim(m1, m2) => ~Likes(u, m2)) & (~Likes(u, m2) & Sim(m1, m2) => ~Likes(u, m1))
+    b = Forall(And(
+        Implies(And(Not(likes_1_sample), sim), Not(likes_2_sample)),
+        Implies(And(Not(likes_2_sample), sim), Not(likes_1_sample)),
+    ))
+    # (Likes(u, m1) & AntiSim(m1, m2) => ~Likes(u, m2)) & (Likes(u, m2) & AntiSim(m1, m2) => ~Likes(u, m1))
+    c = Forall(And(
+        Implies(And(likes_1_sample, anti_sim), Not(likes_2_sample)),
+        Implies(And(likes_2_sample, anti_sim), Not(likes_1_sample))
+    ))
+    return tf.stack([a, b, c], axis=0)
 
 @tf.function
 def constraint_satisfaction(model, likes, cos_sim, rated, popular):
 
     cos_sim = tf.tile(tf.expand_dims(cos_sim, axis=-1), [1, 1, likes.shape[1]])
     
-    sim = tf.minimum(0.0, cos_sim)
-    anti_sim = tf.abs(tf.maximum(0.0, cos_sim))
+    sim = tf.maximum(0.0, cos_sim)
+    anti_sim = tf.abs(tf.minimum(0.0, cos_sim))
     likes_u1 = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
     likes_u2 = tf.tile(tf.expand_dims(likes, axis=1), [1, sim.shape[0], 1])
     # Sim(u1, u2) & Likes(u1, m) => likes(u2, m)
@@ -160,6 +177,7 @@ def ltn_loss(model, target, fnn):
     cost += (tf.reduce_sum((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'], fnn['rated'], fnn['popular']))))
     return cost
 
+@tf.function
 def train_dtn(model, users, rated, mask):
     
     target = {'likes': rated, 'rated': mask}
@@ -236,13 +254,11 @@ class NLR(BaseModel):
 
 
     def predict_single_user(self, user):
-        predictions = self.model([user])
-        return predictions['likes'].numpy().T
+        return self.model.predict([user])
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         user_ids = tf.convert_to_tensor(user_ids)
-        predictions = self.model(user_ids)
-        return predictions['likes'].numpy()
+        return self.model.predict(user_ids).numpy()
 
     def get_name(self) -> str:
         return "NeuralLogicRec"
