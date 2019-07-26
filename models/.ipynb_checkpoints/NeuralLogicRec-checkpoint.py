@@ -22,9 +22,13 @@ class NeuralLogicRec(tf.keras.Model):
             [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] + 
             [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rated_estimator')
 
-        self.popular_estimator = tf.keras.Sequential(
+        self.novel_estimator = tf.keras.Sequential(
             [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] + 
-            [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='popular_estimator')
+            [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='novel_estimator')
+        
+        self.rec_estimator = tf.keras.Sequential(
+            [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] + 
+            [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rec_estimator')
 
         self.nr_users = nr_users
         self.nr_items = nr_items
@@ -41,6 +45,14 @@ class NeuralLogicRec(tf.keras.Model):
         a = tf.nn.embedding_lookup(self.item_embedding, items_a)
         b = tf.nn.embedding_lookup(self.item_embedding, items_b)
         return sim(a, b)
+    
+    def predict(self, users):
+        embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
+        embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
+        expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
+        embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
+        input = tf.concat([embed_user_likes, embed_item], axis=-1)
+        return tf.squeeze(self.rec_estimator(input), axis=-1)
 
     def call(self, users):
         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
@@ -51,12 +63,14 @@ class NeuralLogicRec(tf.keras.Model):
         estimated_likes = tf.squeeze(self.likes_estimator(input), axis=-1)
         estimated_rated = tf.squeeze(self.rated_estimator(input), axis=-1)
 
-        popular = tf.squeeze(self.popular_estimator(self.item_embedding), axis=-1)
+        novel = tf.squeeze(self.novel_estimator(self.item_embedding), axis=-1)
 
         return {'likes': estimated_likes, 
-                'sim': self.calc_embedding_sim(embed_user, embed_user),
+                'user_sim': self.calc_embedding_sim(embed_user, embed_user),
+                'user_item_sim': sim(embed_user_likes, embed_item),
                 'rated': estimated_rated, 
-                'popular': popular,
+                'novel': novel,
+                'rec': tf.squeeze(self.rec_estimator(input), axis=-1)
                  }
 
 @tf.function
@@ -80,8 +94,15 @@ def Forall(wff, axis=None):
     return tf.reduce_mean(wff, axis=axis)
 
 @tf.function
+def Exists(wff, axis=None):
+    return tf.reduce_max(wff, axis=axis)
+
+@tf.function
 def And(a, b):
     return tf.maximum(0.0, a + b - 1)
+
+def Or(*wffs):
+    return tf.squeeze(tf.minimum(1.0, tf.reduce_sum(tf.stack(wffs, axis=-1), axis=-1, keepdims=True)))
 
 @tf.function
 def combine_constraints(*constraints):
@@ -94,55 +115,97 @@ def combine_constraints(*constraints):
             return tf.reshape(tensor, [-1])
     return tf.concat([normalize_shape(x) for x in constraints], axis=0)
 
+def IsEqual(sim):
+    return tf.cast(tf.math.equal(1.0, sim), tf.dtypes.float32)
+
+
 @tf.function
-def item_cf(model, likes):
+def user_cf(model, likes, user_sim, rec):
     
+    cos_sim = tf.tile(tf.expand_dims(user_sim, axis=-1), [1, 1, likes.shape[1]])
+    sim = tf.maximum(0.0, cos_sim)
+    anti_sim = tf.abs(tf.minimum(0.0, cos_sim))
+    likes_u1 = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
+    likes_u2 = tf.tile(tf.expand_dims(likes, axis=1), [1, sim.shape[0], 1])
+    
+    rec_u2 = tf.tile(tf.expand_dims(rec, axis=1), [1, sim.shape[0], 1])
+    # Sim(u1, u2) & Likes(u1, m) => Rec(u2, m)
+    a = Forall(Implies(And(sim, And(likes_u1, Not(IsEqual(sim)))), rec_u2))
+    # Sim(u1, u2) & ~Likes(u1, m) => ~Rec(u2,m)
+    b = Forall(Implies(And(sim, And(Not(likes_u1), Not(IsEqual(sim)))), Not(rec_u2)))
+    # ~Sim(u1,u2) & Likes(u1,m) => ~Rec(u2,m)
+    c = Forall(Implies(And(anti_sim, likes_u1), Not(rec_u2)))
+    return tf.stack([a, b, c], axis=0)
+
+@tf.function
+def item_cf(model, likes, rec):    
     item_sample_a = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
     item_sample_b = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
     item_sim = model.item_sim(item_sample_a, item_sample_b)
-    sim = tf.minimum(0.0, item_sim)
-    anti_sim = tf.abs(tf.maximum(0.0, item_sim))
+    sim = tf.maximum(0.0, item_sim)
+    anti_sim = tf.abs(tf.minimum(0.0, item_sim))
     likes_1_sample = tf.gather(likes, item_sample_a, axis=1)
     likes_2_sample = tf.gather(likes, item_sample_b, axis=1)
-    # Likes(u, m1) & Sim(m1, m2) => Likes(u, m2)
-    a = Implies(And(likes_1_sample, sim), likes_2_sample)
-    # ~Likes(u, m1) & Sim(m1, m2) => ~Likes(u, m2)
-    b = Implies(And(Not(likes_1_sample), sim), Not(likes_2_sample))
-    # Likes(u, m1) & AntiSim(m1, m2) => ~Likes(u, m2)
-    c = Implies(And(likes_1_sample, anti_sim), Not(likes_2_sample))
-    return Forall(And(a, And(b, c)))
+    rec_1 = tf.gather(rec, item_sample_a, axis=1)
+    rec_2 = tf.gather(rec, item_sample_b, axis=1)
+    # (Likes(u, m1) & Sim(m1, m2) => Rec(u, m2)) & (Likes(u, m2) & Sim(m1, m2) => Rec(u, m1)
+    a = Forall(And(
+        Implies(And(likes_1_sample, And(sim, Not(IsEqual(sim)))), rec_2),
+        Implies(And(likes_2_sample, And(sim,Not(IsEqual(sim)))), rec_1)
+    ))
+    # (~Likes(u, m1) & Sim(m1, m2) => ~Rec(u, m2)) & (~Likes(u, m2) & Sim(m1, m2) => ~Rec(u, m1))
+    b = Forall(And(
+        Implies(And(Not(likes_1_sample), And(sim,Not(IsEqual(sim)))), Not(rec_2)),
+        Implies(And(Not(likes_2_sample), And(sim,Not(IsEqual(sim)))), Not(rec_1)),
+    ))
+    # (Likes(u, m1) & AntiSim(m1, m2) => ~Rec(u, m2)) & (Likes(u, m2) & AntiSim(m1, m2) => ~Rec(u, m1))
+    c = Forall(And(
+        Implies(And(likes_1_sample, anti_sim), Not(rec_2)),
+        Implies(And(likes_2_sample, anti_sim), Not(rec_1))
+    ))
+    return tf.stack([a, b, c], axis=0)
 
 @tf.function
-def constraint_satisfaction(model, likes, cos_sim, rated, popular):
+def constraint_satisfaction(model, likes, user_sim, rated, novel, rec, user_item_sim):   
+    # likes, rated, rec:
+    #     axis 0: user
+    #     axis 1: item
+    # user_sim:
+    #     axis 0: user_a
+    #     axis 1: user_b
+    # novel:
+    #     axis 0: item
 
-    cos_sim = tf.tile(tf.expand_dims(cos_sim, axis=-1), [1, 1, likes.shape[1]])
+    rules = list()
     
-    sim = tf.minimum(0.0, cos_sim)
-    anti_sim = tf.abs(tf.maximum(0.0, cos_sim))
-    likes_u1 = tf.tile(tf.expand_dims(likes, axis=0), [sim.shape[0], 1, 1])
-    likes_u2 = tf.tile(tf.expand_dims(likes, axis=1), [1, sim.shape[0], 1])
-    # Sim(u1, u2) & Likes(u1, m) => likes(u2, m)
-    wff1 = Forall(Implies(And(sim, likes_u1), likes_u2))
-    # Sim(u1, u2) & ~Likes(u1, m) => ~likes(u2,m)
-    wff2 = Forall(Implies(And(sim, Not(likes_u1)), Not(likes_u2)))
-    # ~Sim(u1,u2) & Likes(u1,m) => ~likes(u2,m)
-    wff3 = Forall(Implies(And(anti_sim, likes_u1), Not(likes_u2)))
-
-    # Likes => Rated
-    wff4 = Forall(Implies(likes, rated))
-
-    popular_rep = tf.tile(tf.expand_dims(popular, axis=0), [likes.shape[0], 1])
-    # Rated(u,m) => Popular(m)
-    wff5 = Forall(Implies(rated, popular_rep))
-    # ~Popular(m) => Likes(u,m)
-    wff6 = Forall(Implies(Not(popular_rep), likes))
+    # User CF
+    rules.append(user_cf(model, likes, user_sim, rec))
+    
+    # Rated(u,m) | Likes(u,m) => Popular(m)
+    rules.append(Forall(Exists(Implies(Or(rated, likes), Not(novel)), axis=[0])))
+    # Novel(m) => ~Rec(u,m)
+    rules.append(Forall(Implies(novel, rec)))
  
-    wff7 = Forall(Implies(And(Not(rated), likes), likes))
-    wff8 = Forall(Not(popular))
+    # ~Rated(u,m) & Likes(u,m) => Rec(u,m)
+    rules.append(Forall(Implies(And(Not(rated), likes), rec)))
     
-    wff9 = item_cf(model, likes)
+    # ~likes => ~rec
+    rules.append(Forall(Implies(Not(likes), Not(rec))))
     
-    res = combine_constraints(wff1, wff2, wff3, wff4, wff5, wff6, wff7, wff8, wff9)
+    # enforce non-popularity
+#     rules.append(0.25 * Forall(novel))
+    
+    # enforce satisfying rec
+#     rules.append(Forall(rec)) TODO check if this makes sense
+    rules.append(Forall(Implies(rated, Not(rec))))
+    
+    # Item CF
+    rules.append(item_cf(model, likes, rec))
+    
+    rules.append(Forall(Implies(tf.maximum(0.0, user_item_sim), rec)))
+    rules.append(Forall(Implies(tf.minimum(0.0, user_item_sim), Not(rec))))
+    
+    res = combine_constraints(*rules)
     return res
 
 @tf.function
@@ -157,7 +220,7 @@ def supervised_target_loss(target, fnn):
 def ltn_loss(model, target, fnn):
     regularization = 0.0001 * tf.linalg.norm(model.user_embedding) + 0.0001 * tf.linalg.norm(model.item_embedding) + 0.001 # * tf.linalg.norm(model.constraint_weights)
     cost = regularization + supervised_target_loss(target, fnn)
-    cost += (tf.reduce_sum((1 - constraint_satisfaction(model, fnn['likes'], fnn['sim'], fnn['rated'], fnn['popular']))))
+    cost += (tf.reduce_sum((1 - constraint_satisfaction(model, **fnn))))
     return cost
 
 def train_dtn(model, users, rated, mask):
@@ -179,7 +242,7 @@ class NLR(BaseModel):
         self.nr_hidden_layers = kwargs.get('nr_hidden_layers', 4)
         self.epochs = kwargs.get('epochs', 10)
         self.batch_size = kwargs.get('batch_size', 16)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.01)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.0075)
         self.epochs_trained = 0
         self.nr_item_samples = kwargs.get('nr_item_samples', 512)
         
@@ -196,6 +259,7 @@ class NLR(BaseModel):
 
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
+#         dataset = dataset.take(1024)
         dataset = dataset.shuffle(512,reshuffle_each_iteration=True)
         dataset = dataset.batch(self.batch_size)
         for i in range(self.epochs):
@@ -236,13 +300,11 @@ class NLR(BaseModel):
 
 
     def predict_single_user(self, user):
-        predictions = self.model([user])
-        return predictions['likes'].numpy().T
+        return self.model.predict([user])
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         user_ids = tf.convert_to_tensor(user_ids)
-        predictions = self.model(user_ids)
-        return predictions['likes'].numpy()
+        return self.model.predict(user_ids).numpy()
 
     def get_name(self) -> str:
         return "NeuralLogicRec"
