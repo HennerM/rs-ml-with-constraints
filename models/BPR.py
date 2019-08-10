@@ -31,7 +31,8 @@ def loss(model, targets):
     pos_score = tf.matmul(embed_user, embed_pos, transpose_b=True)
     neg_score = tf.matmul(embed_user, embed_neg, transpose_b=True)
     # print(pos_score, neg_score)
-    return tf.reduce_mean(-tf.math.log(tf.nn.sigmoid(pos_score - neg_score)))
+    reg_term = + model.regularization * (tf.math.square(tf.norm(model.U)) + tf.math.square(tf.norm(model.P))
+    return tf.reduce_mean(-tf.math.log(tf.nn.sigmoid(pos_score - neg_score))) + reg_term 
 
     # predictions = model(user_indices)
     # target = tf.cast(targets['x'], tf.float32)
@@ -98,3 +99,4 @@ class BPR(BaseModel):
     def get_params(self) -> dict:
         param_names = ['latent_dim', 'epochs', 'batch_size', ]
         return  {param: (self.__dict__[param]) for param in param_names}
+dd
