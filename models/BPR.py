@@ -11,7 +11,7 @@ class MF(tf.keras.Model):
 
         self.U = tf.Variable(initial_value=tf.random.truncated_normal([nr_users, latent_dim], name='latent_users',mean=0.0,stddev=0.5))
         self.P = tf.Variable(initial_value=tf.random.truncated_normal([nr_items, latent_dim], name='latent_items',mean=0.0,stddev=0.5))
-        self.regularization = 0.00001
+        self.regularization = 0.0001
 
     def call(self, user=None):
         specific = tf.nn.embedding_lookup(self.U, user)
