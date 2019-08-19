@@ -64,6 +64,8 @@ class Evaluation:
         fp = (pred * (~actual) * mask).sum(axis=1)
         denom = (tp + fp)
         not_null = np.where(denom)
+        if len(not_null) == 0:
+            return np.array([])
         return tp[not_null] / denom[not_null]
 
     @staticmethod
@@ -73,6 +75,8 @@ class Evaluation:
         fn = ((~pred) * actual * mask).sum(axis=1)
         denom =  (tp + fn)
         not_null = np.where(denom)
+        if len(not_null) == 0:
+            return np.array([])
         return tp[not_null] / denom[not_null]
 
     @lru_cache(maxsize=4096)
@@ -182,6 +186,7 @@ class Evaluation:
         metrics['unique@1'] = top_1
         metrics['unique@5'] = top_5
         metrics['unique@10'] = top_10
+        metrics['nr_users'] = len(x)
         return metrics
 
     def init_metrics(self):
@@ -200,6 +205,7 @@ class Evaluation:
         metrics['unique@1'] = np.zeros(self.nr_items)
         metrics['unique@5'] = np.zeros(self.nr_items)
         metrics['unique@10'] = np.zeros(self.nr_items)
+        metrics['nr_users'] = 0.0
         return metrics
     
     @staticmethod
@@ -218,10 +224,10 @@ class Evaluation:
         metrics['unique@1'][curr['unique@1']] = 1
         metrics['unique@5'][curr['unique@5']] = 1
         metrics['unique@10'][curr['unique@10']] = 1
+        metrics['nr_users'] += curr['nr_users']
         return metrics
     
-    @staticmethod
-    def collect_metrics(metrics):
+    def collect_metrics(self, metrics):
         result = dict()
         result['accuracy'] = np.mean(metrics['accuracy'])
         result['precision'] = np.mean(metrics['precision'])
@@ -234,9 +240,9 @@ class Evaluation:
         result['epc@5']=  np.mean(metrics['epc@5'])
         result['epc@10'] = np.mean(metrics['epc@10'])
         result['epd@5'] = np.mean(metrics['epd@5'])
-        result['unique@1'] = np.sum(metrics['unique@1'])
-        result['unique@5'] = np.sum(metrics['unique@5'])
-        result['unique@10'] = np.sum(metrics['unique@10'])
+        result['coverage@1'] = np.sum(metrics['unique@1']) / float(self.nr_items)
+        result['coverage@5'] = np.sum(metrics['unique@5']) / float(self.nr_items)
+        result['coverage@10'] = np.sum(metrics['unique@10']) / float(self.nr_items)
         return result
     
     def evaluate_single_thread(self, model, mode = 'test', max_nr_batches = None):
@@ -258,7 +264,7 @@ class Evaluation:
             
             metrics = Evaluation.update_metrics(metrics, result)
 
-        metrics = Evaluation.collect_metrics(metrics)
+        metrics = self.collect_metrics(metrics)
             
         metrics['name'] = model.get_name()
         for k, v in model.get_params().items():
