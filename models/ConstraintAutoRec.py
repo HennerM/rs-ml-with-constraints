@@ -11,7 +11,7 @@ class ConstraintAutoRec(BaseModel):
 
     def __init__(self, dimensions, **kwargs):
         super().__init__(dimensions, **kwargs)
-        self.latent_dims = kwargs.get('latent_dim', 128)
+        self.latent_dims = kwargs.get('latent_dim', 32)
         self.input_dim = dimensions
         self.accuracy_weight = kwargs.get('accuracy_weight', 1.0)
         self.novelty_weight = kwargs.get('novelty_weight', 0.1)
@@ -32,7 +32,7 @@ class ConstraintAutoRec(BaseModel):
         # y_mask = Input(shape=(self.input_dim,), name='input_y_mask')
 
         x = rating
-        x = Dense(64, activation='relu')(x)
+        x = Dense(self.latent_dims * 2, activation='relu')(x)
         latent = Dense(self.latent_dims, name='latent_vector', activation='relu')(x)
 
         self.encoder = Model(rating, latent, name='encoder')
@@ -40,7 +40,7 @@ class ConstraintAutoRec(BaseModel):
 
         latent_inputs = Input(shape=(self.latent_dims,), name='decoder_input')
         x = latent_inputs
-        x = Dense(64, activation='relu')(x)
+        x = Dense(self.latent_dims * 2, activation='relu')(x)
 
         outputs = Dense(self.input_dim, name='decoder_output', activation='sigmoid')(x)
         self.decoder = Model(latent_inputs, outputs, name='decoder')
