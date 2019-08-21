@@ -11,7 +11,7 @@ class MF(tf.keras.Model):
 
         self.U = tf.Variable(initial_value=tf.random.truncated_normal([nr_users, latent_dim], name='latent_users',mean=0.0,stddev=0.5))
         self.P = tf.Variable(initial_value=tf.random.truncated_normal([nr_items, latent_dim], name='latent_items',mean=0.0,stddev=0.5))
-        self.regularization = 0.00001
+        self.regularization = 0.0001
 
     def call(self, user=None):
         specific = tf.nn.embedding_lookup(self.U, user)
@@ -31,7 +31,8 @@ def loss(model, targets):
     pos_score = tf.matmul(embed_user, embed_pos, transpose_b=True)
     neg_score = tf.matmul(embed_user, embed_neg, transpose_b=True)
     # print(pos_score, neg_score)
-    return tf.reduce_mean(-tf.math.log(tf.nn.sigmoid(pos_score - neg_score)))
+    reg_term = + model.regularization * (tf.math.square(tf.norm(model.U)) + tf.math.square(tf.norm(model.P))
+    return tf.reduce_mean(-tf.math.log(tf.nn.sigmoid(pos_score - neg_score))) + reg_term 
 
     # predictions = model(user_indices)
     # target = tf.cast(targets['x'], tf.float32)
@@ -98,3 +99,4 @@ class BPR(BaseModel):
     def get_params(self) -> dict:
         param_names = ['latent_dim', 'epochs', 'batch_size', ]
         return  {param: (self.__dict__[param]) for param in param_names}
+dd
