@@ -8,91 +8,65 @@ import time
 
 
 class NeuralLogicRec(tf.keras.Model):
-    def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers, nr_item_samples, constraints):
+    def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers, nr_item_samples):
         super(tf.keras.Model, self).__init__()
         self.embedding_dim = embedding_dim
 
-#         self.user_embedding = tf.Variable(initial_value=tf.random.normal([nr_users, embedding_dim]), name='embedding_user')
-        self.item_embedding = tf.Variable(initial_value=tf.random.normal([nr_items, embedding_dim]), name='embedding_item') 
-        
-        self.encoder = tf.keras.layers.Dense(units=embedding_dim, activation='relu')
-        
-        self.likes_estimator = tf.keras.Sequential([
-            self.encoder,
-            tf.keras.layers.Dense(units=nr_items, activation='sigmoid')
-        ], name='likes_estimator')
-        
-#         self.rec_estimator = tf.keras.Sequential([
-#             tf.keras.layers.Dense(units=embedding_dim, activation='relu'),
-#             tf.keras.layers.Dense(units=nr_items, activation='sigmoid')
-#         ], name='rec_estimator')
-        
-#         self.likes_estimator = tf.keras.Sequential(
-#             [tf.keras.layers.Dense(units=16, activation='relu') for i in range(nr_hidden_layers)] + 
-#             [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
+        self.user_embedding = tf.Variable(initial_value=tf.random.normal([nr_users, embedding_dim]), name='embedding_user')
+        self.item_embedding = tf.Variable(initial_value=tf.random.normal([nr_items, embedding_dim]), name='embedding_item')
 
-#         self.rated_estimator = tf.keras.Sequential(
-#             [tf.keras.layers.Dense(units=16, activation='relu') for i in range(nr_hidden_layers)] + 
-#             [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rated_estimator')
+        self.likes_estimator = tf.keras.Sequential(
+            [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] +
+            [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='likes_estimator')
+
 
         self.popular_estimator = tf.keras.Sequential(
-            [tf.keras.layers.Dense(units=16, activation='relu') for i in range(nr_hidden_layers)] + 
+            [tf.keras.layers.Dense(units=16, activation='relu') for i in range(nr_hidden_layers)] +
             [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='popular_estimator')
-        
+
         self.rec_estimator = tf.keras.Sequential(
-            [tf.keras.layers.Dense(units=16, activation='relu') for i in range(nr_hidden_layers)] + 
+            [tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu') for i in range(nr_hidden_layers)] +
             [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='rec_estimator')
 
         self.nr_users = nr_users
         self.nr_items = nr_items
         self.nr_item_samples = nr_item_samples
-        self.constraints = constraints
-        self.constraint_weights = tf.convert_to_tensor([c.weight for c in self.constraints])
 
     @tf.function
     def calc_embedding_sim(self, embed_a, embed_b):
         a = tf.tile(tf.expand_dims(embed_a, axis=1), [1, len(embed_b), 1])
         b = tf.tile(tf.expand_dims(embed_b, axis=0), [len(embed_a),1, 1])
         return sim(a, b)
-    
+
     @tf.function
     def item_sim(self, items_a, items_b):
         a = tf.nn.embedding_lookup(self.item_embedding, items_a)
         b = tf.nn.embedding_lookup(self.item_embedding, items_b)
         return sim(a, b)
-    
-    def predict(self, likes, users):
-#         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
-        embed_user = self.encoder(likes)
+
+    def predict(self, users):
+        embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
         embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
         expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
         embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
         input = tf.concat([embed_user_likes, embed_item], axis=-1)
         return tf.squeeze(self.rec_estimator(input), axis=-1)
-#         return self.likes_estimator(likes)
 
-    def call(self, users, likes, ratings):
-#         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
-        embed_user = self.encoder(likes)
+    def call(self, users):
+        embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
         embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
         expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
         embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
         input = tf.concat([embed_user_likes, embed_item], axis=-1)
-        
-        sample_likes = tf.math.less(tf.random.uniform(tf.shape(likes)), 0.3)
-        noisy_likes = tf.where(sample_likes, False, likes)
-        
-        estimated_likes = self.likes_estimator(noisy_likes)
-#         estimated_likes = tf.squeeze(self.likes_estimator(input), axis=-1)
-#         estimated_rated = tf.squeeze(self.rated_estimator(input), axis=-1)
+        estimated_likes = tf.squeeze(self.likes_estimator(input), axis=-1)
 
         popular = tf.squeeze(self.popular_estimator(self.item_embedding), axis=-1)
 
-        return {'likes': estimated_likes, 
+        return {'likes': estimated_likes,
                 'user_sim': self.calc_embedding_sim(embed_user, embed_user),
-                'rec': tf.squeeze(self.rec_estimator(input), axis=-1),
                 'popular': popular,
-                 }
+                'rec': tf.squeeze(self.rec_estimator(input), axis=-1)
+                }
 
 Constraint = namedtuple('Constraint', ['weight', 'formula'])
     
@@ -202,21 +176,13 @@ def item_cf(model, outputs):
 @tf.function
 def diversity_constraint(model, outputs):
     rec = outputs['rec']
-    likes = outputs['likes']
     item_sample_a = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
     item_sample_b = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
     item_sim = model.item_sim(item_sample_a, item_sample_b)
     sim = tf.maximum(0.0, item_sim)
-    anti_sim = tf.abs(tf.minimum(0.0, item_sim))
     rec_1 = tf.gather(rec, item_sample_a, axis=1)
     rec_2 = tf.gather(rec, item_sample_b, axis=1)
-    likes_1 = tf.gather(likes, item_sample_a, axis=1)
-    likes_2 = tf.gather(likes, item_sample_b, axis=1)
-    # sim(i1, i2) & i1 != i2 & rec(u, i1) => ~rec(u,i2)
-    c_1 = Forall(Implies(And(And(sim, Not(IsEqual(sim))), rec_1), Not(rec_2)))
-    # dissim(i1, i2) & rec(u, i1) => rec(u,i2)
-    c_2 = Forall(Implies(anti_sim, And(rec_1, rec_2))) # TODO evaluate
-    return And(c_1, c_2)
+    return Forall(Implies(And(And(sim, Not(IsEqual(sim))), rec_1), Not(rec_2)))
 
 @tf.function
 def constraint_satisfaction(model, outputs):   

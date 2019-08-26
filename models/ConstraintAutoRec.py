@@ -59,8 +59,12 @@ class ConstraintAutoRec(BaseModel):
         num_ratings = tf.reduce_sum(mask)
         num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
         supervised_loss =  self.accuracy_weight * tf.math.square(tf.norm((y_true - y_pred) * mask)) / num_ratings
-        novelty_constraint = self.novelty_weight * tf.reduce_sum(y_pred * (tf.reduce_sum(y_pred, 0) / tf.cast(tf.shape(y_pred)[0], tf.float32))) / tf.cast(tf.size(y_pred), tf.dtypes.float32)
-        diversity_constraint = self.diversity_weight * tf.reduce_sum(y_pred * x_noisy) / tf.cast(tf.size(y_pred), tf.dtypes.float32)
+        shape = tf.cast(tf.shape(y_pred), tf.float32)
+        nr_user = shape[0]
+        nr_items = shape[1]
+        novelty_constraint = self.novelty_weight * tf.reduce_mean(tf.square(y_pred - ( 1 - tf.reduce_sum(y_pred, 0) / nr_user)))
+        diversity_constraint = self.diversity_weight * tf.reduce_mean(y_pred * x_noisy)
+        # diversity_constraint = self.diversity_weight * tf.reduce_mean(1 - tf.reduce_sum(y_pred, 1) / nr_items)
 
         return supervised_loss + novelty_constraint + diversity_constraint
 
