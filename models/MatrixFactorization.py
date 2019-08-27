@@ -23,7 +23,7 @@ def loss(model, targets):
     predictions = model(user_indices)
     target = tf.cast(targets['x'], tf.float32)
     # TODO calculate loss only on rated items
-    reg_term = + model.regularization * (tf.math.square(tf.norm(model.U)) + tf.math.square(tf.norm(model.P))
+    reg_term = + model.regularization * (tf.math.square(tf.norm(model.U)) + tf.math.square(tf.norm(model.P)))
     return tf.reduce_mean(tf.square((predictions - target))) + reg_term
 
 def grad(model, targets):
