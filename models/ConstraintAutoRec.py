@@ -51,11 +51,13 @@ class ConstraintAutoRec(BaseModel):
 
         self.model = Model(inputs=[rating, mask], outputs=self.decoder(self.encoder(rating)),
                            name='ConstraintAutoRec')
-        self.model.compile(optimizer=self.optimizer, loss=constraint_loss, metrics=['accuracy'])
+        self.model.compile(optimizer=self.optimizer, loss=constraint_loss, metrics=['accuracy'], experimental_run_tf_function=False)
 
 
+    @tf.function
     def augmented_loss(self, y_true, y_pred, mask, x_noisy):
         # error_constraint = alpha * tf.reduce_sum(estimated * actual)
+        y_true = tf.cast(y_true, tf.float32)
         num_ratings = tf.reduce_sum(mask)
         num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
         supervised_loss =  self.accuracy_weight * tf.math.square(tf.norm((y_true - y_pred) * mask)) / num_ratings
