@@ -40,6 +40,21 @@ ml_small = {
     'dimensions': 10381,
 }
 
+msd = {
+    'feature_description': ml_feature,
+    'train': {
+        'records': 117966,
+        'filenames': [os.path.dirname(__file__) + '/../../Data/msd/train.tfrecords']
+    },
+    'test': {
+        'records': 117966,
+        'filenames': (os.path.dirname(__file__) + '/../../Data/msd/test.tfrecords')
+    },
+    'item_features': os.path.dirname(__file__) + '/../../Data/msd/song_features.npz',
+    'user': 117966,
+    'dimensions': 6712,
+}
+
 
 def load_dataset(ds: dict, edition = 'train') -> tf.data.Dataset:
     def parse_example(example_proto) -> dict:
