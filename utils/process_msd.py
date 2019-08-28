@@ -24,9 +24,12 @@ if __name__ == "__main__":
     nr_items = ratings['item_id'].max() + 1
     nr_users = ratings['user_id'].max() + 1
     train_ratings, test_ratings, validate_ratings = split_train_test_validate_df(ratings)
+    print("Total ratings:", len(ratings))
     print("Train ratings:", len(train_ratings))
     print("Validation ratings:", len(validate_ratings))
     print("Test ratings:", len(test_ratings))
+    print("Items:", nr_items)
+    print("User:", nr_users)
 
     train_ratings = group_and_transform(train_ratings)
     train_ratings['rated'] = train_ratings['rated'].map(lambda x: augment_negative_sampling([y[0] for y in x], nr_items))

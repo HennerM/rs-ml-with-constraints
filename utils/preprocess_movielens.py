@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
-from .common import save_df_to_records, split_train_test_validate_df, augment_negative_sampling
+from common import save_df_to_records, split_train_test_validate_df, augment_negative_sampling
 
 def load_data(ratings_csv, movies_csv):
 
@@ -29,9 +29,10 @@ def group_and_transform(ratings):
 
 
 if __name__ == "__main__":
-    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-latest-small/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
+    ratings, dimensions = load_data(os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/ratings.csv', os.path.dirname(__file__) + '../../Data/MovieLens/ml-20m/movie_mapping.csv')
     ratings['userId'] -= 1
     print("Nr of ratings:", ratings['rating'].count())
+    print("Nr of positive interactions:", convert_to_implicit(ratings['rating']).sum())
     nr_items = ratings['mId'].max() + 1
     nr_users = ratings['userId'].max() + 1
     print("Items:", nr_items)
