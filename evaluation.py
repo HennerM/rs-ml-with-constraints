@@ -164,8 +164,9 @@ class Evaluation:
         x = batch['x'].numpy()
         x_test = batch['x_test'].numpy()
         mask_test = batch['mask_test'].numpy()
+        mask = batch['mask'].numpy()
 
-        top_10 = Evaluation.recommend_top_n(predictions, 10, x)
+        top_10 = Evaluation.recommend_top_n(predictions, 10, mask)
         top_5 = top_10[:,0:5]
         top_1 = top_10[:,0:1]
 
