@@ -81,7 +81,7 @@ class Evaluation:
 
     @lru_cache(maxsize=4096)
     def item_sim(self, item_id, other_id):
-        return Evaluation.cosine_similarity(self.item_features[item_id], self.item_features[other_id])
+        return (Evaluation.cosine_similarity(self.item_features[item_id], self.item_features[other_id]) + 1) / 2
 
 
     @staticmethod
