@@ -160,6 +160,22 @@ class Evaluation:
 
         return ap
 
+    @staticmethod
+    def precision_at(recommendations, x_test, n):
+        ap = np.zeros(recommendations.shape[0])
+        for u in range(recommendations.shape[0]):
+            ap[u] = Evaluation.precision_at_n(recommendations[u], x_test[u], n)
+
+        return ap
+
+    @staticmethod
+    def recall_at(recommendations, x_test, n):
+        ap = np.zeros(recommendations.shape[0])
+        for u in range(recommendations.shape[0]):
+            ap[u] =  np.sum(x_test[u][recommendations[u]]) / np.sum(x_test[u])
+
+        return ap
+
     def calc_recommendation_metrics(self, predictions, batch):
         x = batch['x'].numpy()
         x_test = batch['x_test'].numpy()
@@ -174,8 +190,8 @@ class Evaluation:
         
         metrics = dict()
         metrics['accuracy'] = Evaluation.calculate_accuracy(pred_true, x_test, mask_test).tolist()
-        metrics['precision'] = Evaluation.calculate_precision(pred_true, x_test, mask_test).tolist()
-        metrics['recall'] = Evaluation.calculate_recall(pred_true, x_test, mask_test).tolist()
+        metrics['precision@5'] = Evaluation.precision_at(top_5, x_test, 5).tolist()
+        metrics['recall@10'] = Evaluation.recall_at(top_10, x_test, 10).tolist()
         metrics['map@1'] = Evaluation.mean_average_precision(top_5, x_test, 1).tolist()
         metrics['map@5'] = Evaluation.mean_average_precision(top_5, x_test, 5).tolist()
         metrics['map@10'] = Evaluation.mean_average_precision(top_10, x_test, 10).tolist()
@@ -193,8 +209,8 @@ class Evaluation:
     def init_metrics(self):
         metrics = dict()
         metrics['accuracy'] = list()
-        metrics['precision'] = list()
-        metrics['recall'] = list()
+        metrics['precision@5'] = list()
+        metrics['recall@10'] = list()
         metrics['map@1'] = list()
         metrics['map@5'] = list()
         metrics['map@10'] = list()
@@ -212,8 +228,8 @@ class Evaluation:
     @staticmethod
     def update_metrics(metrics, curr):
         metrics['accuracy'] += curr['accuracy']
-        metrics['precision'] += curr['precision']
-        metrics['recall'] += curr['recall']
+        metrics['precision@5'] += curr['precision@5']
+        metrics['recall@10'] += curr['recall@10']
         metrics['map@1'] += curr['map@1']
         metrics['map@5'] += curr['map@5']
         metrics['map@10'] += curr['map@10']
@@ -231,8 +247,8 @@ class Evaluation:
     def collect_metrics(self, metrics):
         result = dict()
         result['accuracy'] = np.mean(metrics['accuracy'])
-        result['precision'] = np.mean(metrics['precision'])
-        result['recall'] = np.mean(metrics['recall'])
+        result['precision@5'] = np.mean(metrics['precision@5'])
+        result['recall@10'] = np.mean(metrics['recall@10'])
         result['map@1'] = np.mean(metrics['map@1'])
         result['map@5'] = np.mean(metrics['map@5'])
         result['map@10'] = np.mean(metrics['map@10'])
