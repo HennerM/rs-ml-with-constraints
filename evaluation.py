@@ -127,12 +127,17 @@ class Evaluation:
             item_set = actual[u].nonzero()[0]
             nr_items_considered = min(len(item_set), 30)
             if nr_items_considered > 0:
+                np.random.seed(u)
                 item_set = np.random.choice(item_set, nr_items_considered, replace=False)
                 running_sum = 0
                 for i in range(nr_recs):
+                    distance = 0
                     for j in range(nr_items_considered):
-                        running_sum += 1 - self.item_sim(recommendations[u, i], item_set[j])
-                epd_values.append(running_sum / (nr_recs * nr_items_considered))
+                        distance += (1 - self.item_sim(recommendations[u, i], item_set[j]))
+                    running_sum += (distance / nr_items_considered) * disc(i + 1)
+                discounts = disc(np.arange(1, nr_recs + 1))
+                mean = running_sum / np.sum(discounts)
+                epd_values.append(mean)
 
 
         return epd_values
@@ -191,7 +196,7 @@ class Evaluation:
         metrics = dict()
         metrics['accuracy'] = Evaluation.calculate_accuracy(pred_true, x_test, mask_test).tolist()
         metrics['precision@5'] = Evaluation.precision_at(top_5, x_test, 5).tolist()
-        metrics['recall@10'] = Evaluation.recall_at(top_10, x_test, 10).tolist()
+        metrics['recall@5'] = Evaluation.recall_at(top_5, x_test, 5).tolist()
         metrics['map@1'] = Evaluation.mean_average_precision(top_5, x_test, 1).tolist()
         metrics['map@5'] = Evaluation.mean_average_precision(top_5, x_test, 5).tolist()
         metrics['map@10'] = Evaluation.mean_average_precision(top_10, x_test, 10).tolist()
@@ -210,7 +215,7 @@ class Evaluation:
         metrics = dict()
         metrics['accuracy'] = list()
         metrics['precision@5'] = list()
-        metrics['recall@10'] = list()
+        metrics['recall@5'] = list()
         metrics['map@1'] = list()
         metrics['map@5'] = list()
         metrics['map@10'] = list()
@@ -229,7 +234,7 @@ class Evaluation:
     def update_metrics(metrics, curr):
         metrics['accuracy'] += curr['accuracy']
         metrics['precision@5'] += curr['precision@5']
-        metrics['recall@10'] += curr['recall@10']
+        metrics['recall@5'] += curr['recall@5']
         metrics['map@1'] += curr['map@1']
         metrics['map@5'] += curr['map@5']
         metrics['map@10'] += curr['map@10']
@@ -248,7 +253,7 @@ class Evaluation:
         result = dict()
         result['accuracy'] = np.mean(metrics['accuracy'])
         result['precision@5'] = np.mean(metrics['precision@5'])
-        result['recall@10'] = np.mean(metrics['recall@10'])
+        result['recall@5'] = np.mean(metrics['recall@5'])
         result['map@1'] = np.mean(metrics['map@1'])
         result['map@5'] = np.mean(metrics['map@5'])
         result['map@10'] = np.mean(metrics['map@10'])
