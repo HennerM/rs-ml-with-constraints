@@ -69,7 +69,7 @@ class NeuralLogicRecAE(tf.keras.Model):
         popular = tf.squeeze(self.popular_estimator(self.item_embedding), axis=-1)
 
         return {'likes': estimated_likes, 
-                'user_sim': self.calc_embedding_sim(embed_user, embed_user),
+                'user_sim': calc_embedding_sim(embed_user, embed_user),
                 'rec': tf.squeeze(self.rec_estimator(input), axis=-1),
                 'popular': popular,
                  }
@@ -100,18 +100,12 @@ class NeuralLogicRecSimple(tf.keras.Model):
         self.nr_item_samples = nr_item_samples
 
     @tf.function
-    def calc_embedding_sim(self, embed_a, embed_b):
-        a = tf.tile(tf.expand_dims(embed_a, axis=1), [1, len(embed_b), 1])
-        b = tf.tile(tf.expand_dims(embed_b, axis=0), [len(embed_a),1, 1])
-        return sim(a, b)
-
-    @tf.function
     def item_sim(self, items_a, items_b):
         a = tf.nn.embedding_lookup(self.item_embedding, items_a)
         b = tf.nn.embedding_lookup(self.item_embedding, items_b)
         return sim(a, b)
 
-    def predict(self, users):
+    def predict(self, likes, users):
         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
         embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
         expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
@@ -119,7 +113,7 @@ class NeuralLogicRecSimple(tf.keras.Model):
         input = tf.concat([embed_user_likes, embed_item], axis=-1)
         return tf.squeeze(self.rec_estimator(input), axis=-1)
 
-    def call(self, users):
+    def call(self, users, likes):
         embed_user = tf.nn.embedding_lookup(self.user_embedding, users)
         embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
         expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
@@ -130,7 +124,7 @@ class NeuralLogicRecSimple(tf.keras.Model):
         popular = tf.squeeze(self.popular_estimator(self.item_embedding), axis=-1)
 
         return {'likes': estimated_likes,
-                'user_sim': self.calc_embedding_sim(embed_user, embed_user),
+                'user_sim': calc_embedding_sim(embed_user, embed_user),
                 'popular': popular,
                 'rec': tf.squeeze(self.rec_estimator(input), axis=-1)
                 }
@@ -191,7 +185,7 @@ def combine_constraints(*constraints):
 
 
 @tf.function
-def user_cf(outputs):
+def user_cf(model, outputs):
     likes = outputs['likes']
     rec = outputs['rec']
     user_sim = outputs['user_sim']
@@ -302,13 +296,13 @@ class NLR(BaseModel):
         super().__init__(num_items, **kwargs)
         self.nr_users = num_users
         self.nr_items = num_items
-        self.embedding_dim = kwargs.get('embedding_dim', 16)
-        self.nr_hidden_layers = kwargs.get('nr_hidden_layers', 4)
+        self.embedding_dim = kwargs.get('embedding_dim', 32)
+        self.nr_hidden_layers = kwargs.get('nr_hidden_layers', 3)
         self.epochs = kwargs.get('epochs', 10)
-        self.batch_size = kwargs.get('batch_size', 16)
+        self.batch_size = kwargs.get('batch_size', 48)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.0075)
         self.epochs_trained = 0
-        self.nr_item_samples = kwargs.get('nr_item_samples', 512)
+        self.nr_item_samples = kwargs.get('nr_item_samples', 4096)
         self.constraints = kwargs.get('constraints', [])
         self.additional_name = kwargs.get('name', 'default')
         self.mode = kwargs.get('mode', 'ae')
@@ -368,8 +362,7 @@ class NLR(BaseModel):
         self.model.save_weights(path + '/NeuralLogicRec_' + self.additional_name + '.h5')
 
     def load(self, path):
-        pass
-
+        self.model.load_weights(path)
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         user_ids = tf.convert_to_tensor(user_ids)
