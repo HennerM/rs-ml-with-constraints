@@ -162,13 +162,12 @@ def Exists(wff, axis=None):
 
 @tf.function
 def And(a, b):
-    return tf.maximum(0.0, a + b - 1)
+    return tf.maximum(0.0, a + b - 1.0)
 
 @tf.function
 def Or(*wffs):
     return tf.squeeze(tf.minimum(1.0, tf.reduce_sum(tf.stack(wffs, axis=-1), axis=-1, keepdims=True)))
 
-@tf.function
 def IsEqual(sim):
     return tf.cast(tf.math.equal(1.0, sim), tf.dtypes.float32)
 
