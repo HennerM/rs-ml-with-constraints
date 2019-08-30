@@ -89,10 +89,10 @@ class ConstraintAutoRec(BaseModel):
         self.model.fit(dataset, epochs=self.epochs, steps_per_epoch=nr_records//self.batch_size)
 
     def save(self, path):
-        self.model.save(path + '/constraint_auto_rec.h5')
+        self.model.save_weights(path + '/' + self.name +'.h5')
 
     def load(self, path):
-        self.model = tf.keras.models.load_model(path)
+        self.model.load_weights(path)
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         mask_dummy = np.ones(data.shape)
