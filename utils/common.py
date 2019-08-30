@@ -14,13 +14,13 @@ movie_lens = {
     'feature_description': ml_feature,
     'train': {
         'records': 138493,
-        'filenames': [os.path.dirname(__file__) + '/../../Data/MovieLens/ml-20m/train.tfrecords']
+        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/ml20m/train.tfrecords']
     },
     'test': {
         'records': 610,
-        'filenames': (os.path.dirname(__file__) + '/../../Data/MovieLens/ml-20m/test.tfrecords')
+        'filenames': '/home/ec2-user/SageMaker/data/MovieLens/ml20m/test.tfrecords'
     },
-    'item_features': os.path.dirname(__file__) + '/../../Data/MovieLens/movie_features.npz',
+    'item_features': '/home/ec2-user/SageMaker/data/MovieLens/movie_features.npz',
     'user': 138493,
     'dimensions': 10381,
 }
@@ -29,13 +29,13 @@ ml_small = {
     'feature_description': ml_feature,
     'train': {
         'records': 610,
-        'filenames': [os.path.dirname(__file__) + '/../../Data/MovieLens/ml-latest-small/train.tfrecords']
+        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/train.tfrecords']
     },
     'test': {
         'records': 610,
-        'filenames': (os.path.dirname(__file__) + '/../../Data/MovieLens/ml-latest-small/test.tfrecords')
+        'filenames': '/home/ec2-user/SageMaker/data/MovieLens/test.tfrecords'
     },
-    'item_features': os.path.dirname(__file__) + '/../../Data/MovieLens/movie_features.npz',
+    'item_features': '/home/ec2-user/SageMaker/data/MovieLens/movie_features.npz',
     'user': 610,
     'dimensions': 10381,
 }
@@ -44,13 +44,13 @@ msd = {
     'feature_description': ml_feature,
     'train': {
         'records': 117966,
-        'filenames': [os.path.dirname(__file__) + '/../../Data/msd/train.tfrecords']
+        'filenames': ['/home/ec2-user/SageMaker/data/MSD/train.tfrecords']
     },
     'test': {
         'records': 117966,
-        'filenames': (os.path.dirname(__file__) + '/../../Data/msd/test.tfrecords')
+        'filenames': ['/home/ec2-user/SageMaker/data/MSD/test.tfrecords']
     },
-    'item_features': os.path.dirname(__file__) + '/../../Data/msd/song_features.npz',
+    'item_features': '/home/ec2-user/SageMaker/data/MSD/song_features.npz',
     'user': 117966,
     'dimensions': 6712,
 }
