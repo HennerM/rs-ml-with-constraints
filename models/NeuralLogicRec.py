@@ -20,10 +20,14 @@ class NeuralLogicRecAE(tf.keras.Model):
 
         self.item_embedding = tf.Variable(initial_value=tf.random.normal([nr_items, embedding_dim]), name='embedding_item')
         
-        self.encoder = tf.keras.layers.Dense(units=embedding_dim, activation='relu')
+        self.encoder = tf.keras.Sequential([
+            tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu'),
+            tf.keras.layers.Dense(units=embedding_dim, activation='relu')
+        ])
+        
         
         self.likes_estimator = tf.keras.Sequential([
-            self.encoder,
+            tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu'),
             tf.keras.layers.Dense(units=nr_items, activation='sigmoid')
         ], name='likes_estimator')
 
@@ -56,16 +60,15 @@ class NeuralLogicRecAE(tf.keras.Model):
         return tf.squeeze(self.rec_estimator(input), axis=-1)
 
     def call(self, users, likes):
-        embed_user = self.encoder(likes)
+        sample_likes = tf.math.less(tf.random.uniform(tf.shape(likes)), 0.3)
+        noisy_likes = tf.where(sample_likes, False, likes)
+        embed_user = self.encoder(noisy_likes)
         embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
         expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
         embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
         input = tf.concat([embed_user_likes, embed_item], axis=-1)
         
-        sample_likes = tf.math.less(tf.random.uniform(tf.shape(likes)), 0.3)
-        noisy_likes = tf.where(sample_likes, False, likes)
-        
-        estimated_likes = self.likes_estimator(noisy_likes)
+        estimated_likes = self.likes_estimator(embed_user)
         popular = tf.squeeze(self.popular_estimator(self.item_embedding), axis=-1)
 
         return {'likes': estimated_likes, 
@@ -75,7 +78,7 @@ class NeuralLogicRecAE(tf.keras.Model):
                  }
 
 class NeuralLogicRecSimple(tf.keras.Model):
-    def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers, nr_item_samples):
+    def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers, nr_item_samples, constraints):
         super(tf.keras.Model, self).__init__()
         self.embedding_dim = embedding_dim
 
@@ -98,7 +101,10 @@ class NeuralLogicRecSimple(tf.keras.Model):
         self.nr_users = nr_users
         self.nr_items = nr_items
         self.nr_item_samples = nr_item_samples
-
+        
+        self.constraints = constraints
+        self.constraint_weights = tf.convert_to_tensor([c.weight for c in self.constraints])
+        
     @tf.function
     def item_sim(self, items_a, items_b):
         a = tf.nn.embedding_lookup(self.item_embedding, items_a)
@@ -241,14 +247,13 @@ def diversity_constraint(model, outputs):
     item_sample_b = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
     item_sim = model.item_sim(item_sample_a, item_sample_b)
     sim = tf.maximum(0.0, item_sim)
-    anti_sim = tf.abs(tf.minimum(0.0, item_sim))
+#     anti_sim = tf.abs(tf.minimum(0.0, item_sim))
     rec_1 = tf.gather(rec, item_sample_a, axis=1)
     rec_2 = tf.gather(rec, item_sample_b, axis=1)
     # sim(i1, i2) & i1 != i2 & rec(u, i1) => ~rec(u,i2)
     c_1 = Forall(Implies(And(And(sim, Not(IsEqual(sim))), rec_1), Not(rec_2)))
     # dissim(i1, i2) & rec(u, i1) => rec(u,i2)
-    c_2 = Forall(Implies(anti_sim, And(rec_1, rec_2))) # TODO evaluate
-    return And(c_1, c_2)
+    return c_1
 
 @tf.function
 def constraint_satisfaction(model, outputs):   
@@ -299,7 +304,7 @@ class NLR(BaseModel):
         self.nr_hidden_layers = kwargs.get('nr_hidden_layers', 3)
         self.epochs = kwargs.get('epochs', 10)
         self.batch_size = kwargs.get('batch_size', 48)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.0075)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.0015)
         self.epochs_trained = 0
         self.nr_item_samples = kwargs.get('nr_item_samples', 4096)
         self.constraints = kwargs.get('constraints', [])
@@ -309,7 +314,7 @@ class NLR(BaseModel):
         if self.mode == 'ae':
             self.model = NeuralLogicRecAE(num_users, num_items, self.embedding_dim, self.nr_hidden_layers, self.nr_item_samples, self.constraints)
         else:
-            self.model = NeuralLogicRecAE(num_users, num_items, self.embedding_dim, self.nr_hidden_layers, self.nr_item_samples, self.constraints)
+            self.model = NeuralLogicRecSimple(num_users, num_items, self.embedding_dim, self.nr_hidden_layers, self.nr_item_samples, self.constraints)
 
     @staticmethod
     def transform_train_data(record):
