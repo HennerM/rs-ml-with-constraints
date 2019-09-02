@@ -42,6 +42,9 @@ class NeuralLogicRecAE(tf.keras.Model):
         self.nr_users = nr_users
         self.nr_items = nr_items
         self.nr_item_samples = nr_item_samples
+        self.set_constraints(constraints)
+    
+    def set_constraints(self, constraints):
         self.constraints = constraints
         self.constraint_weights = tf.convert_to_tensor([c.weight for c in self.constraints])
     
@@ -102,6 +105,9 @@ class NeuralLogicRecSimple(tf.keras.Model):
         self.nr_items = nr_items
         self.nr_item_samples = nr_item_samples
         
+        self.set_constraints(constraints)
+        
+    def set_constraints(self, constraints):
         self.constraints = constraints
         self.constraint_weights = tf.convert_to_tensor([c.weight for c in self.constraints])
         
@@ -278,7 +284,6 @@ def supervised_target_loss(target, fnn):
     popular_loss = tf.keras.losses.mean_squared_error(fnn['popular'], calc_popular)
     return likes_loss + popular_loss
 
-@tf.function
 def ltn_loss(model, target, fnn):
     regularization = 0.0001 * tf.linalg.norm(model.item_embedding)
     cost = regularization + supervised_target_loss(target, fnn) * 2
@@ -363,7 +368,7 @@ class NLR(BaseModel):
 
 
     def save(self, path):
-        self.model.save_weights(path + '/NeuralLogicRec_' + self.additional_name + '.h5')
+        self.model.save_weights(path + '/NeuralLogicRec_' + self.additional_name, save_format='tf')
 
     def load(self, path):
         self.model.load_weights(path)
@@ -379,3 +384,6 @@ class NLR(BaseModel):
     def get_params(self) -> dict:
         param_names = ['embedding_dim', 'epochs_trained', 'batch_size', 'nr_hidden_layers', 'nr_item_samples']
         return  {param: (self.__dict__[param]) for param in param_names}
+
+    def set_constraints(self, constraints):
+        self.model.set_constraints(constraints)
