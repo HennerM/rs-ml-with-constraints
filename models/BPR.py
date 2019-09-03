@@ -11,7 +11,7 @@ class MF(tf.keras.Model):
 
         self.U = tf.Variable(initial_value=tf.random.truncated_normal([nr_users, latent_dim], name='latent_users',mean=0.0,stddev=0.5))
         self.P = tf.Variable(initial_value=tf.random.truncated_normal([nr_items, latent_dim], name='latent_items',mean=0.0,stddev=0.5))
-        self.regularization = 0.0001
+        self.regularization = 0.001
 
     def call(self, user=None):
         specific = tf.nn.embedding_lookup(self.U, user)
@@ -30,9 +30,8 @@ def loss(model, targets):
 
     pos_score = tf.matmul(embed_user, embed_pos, transpose_b=True)
     neg_score = tf.matmul(embed_user, embed_neg, transpose_b=True)
-    # print(pos_score, neg_score)
-    reg_term = + model.regularization * (tf.math.square(tf.norm(model.U)) + tf.math.square(tf.norm(model.P)))
-    return tf.reduce_mean(-tf.math.log(tf.nn.sigmoid(pos_score - neg_score))) + reg_term 
+    reg_term = model.regularization * (tf.math.square(tf.norm(model.U)) + tf.math.square(tf.norm(model.P)))
+    return tf.reduce_sum(-tf.math.log(tf.nn.sigmoid(pos_score - neg_score))) + reg_term
 
     # predictions = model(user_indices)
     # target = tf.cast(targets['x'], tf.float32)
@@ -55,7 +54,8 @@ class BPR(BaseModel):
         self.epochs = kwargs.get('epochs', 10)
         self.model = MF(num_users, num_items, self.latent_dim)
         self.batch_size = kwargs.get('batch_size', 128)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+        self.name = kwargs.get('name', 'default')
 
     @staticmethod
     def transform_train_data(record):
@@ -70,7 +70,7 @@ class BPR(BaseModel):
 
     def train(self, dataset: tf.data.Dataset, nr_records: int):
         dataset = dataset.flat_map(self.transform_train_data).batch(self.batch_size)
-        dataset = dataset.shuffle(2048)
+        dataset = dataset.shuffle(4096)
         nr_steps = nr_records // self.batch_size
         for i in range(self.epochs):
             step = 0
@@ -85,16 +85,16 @@ class BPR(BaseModel):
 
 
     def save(self, path):
-        pass
+        self.model.save_weights(path + '/' + self.get_name() +'.h5')
 
     def load(self, path):
-        pass
+        self.model.load_weights(path)
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         return self.model(user_ids).numpy()
 
     def get_name(self) -> str:
-        return "BPR"
+        return "BPR_" + self.name
 
     def get_params(self) -> dict:
         param_names = ['latent_dim', 'epochs', 'batch_size', ]

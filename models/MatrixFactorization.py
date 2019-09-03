@@ -11,7 +11,7 @@ class MF(tf.keras.Model):
 
         self.U = tf.Variable(initial_value=tf.random.truncated_normal([nr_users, latent_dim], name='latent_users'))
         self.P = tf.Variable(initial_value=tf.random.truncated_normal([latent_dim, nr_items], name='latent_items'))
-        self.regularization = 0.00001
+        self.regularization = 0.001
 
     def call(self, user=None):
         specific = tf.gather(self.U, user)
@@ -42,7 +42,8 @@ class MatrixFactorization(BaseModel):
         self.epochs = kwargs.get('epochs', 10)
         self.model = MF(num_users, num_items, self.latent_dim)
         self.batch_size = kwargs.get('batch_size', 128)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.005)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+        self.name = kwargs.get('name', 'default')
 
 
 
@@ -60,16 +61,16 @@ class MatrixFactorization(BaseModel):
 
 
     def save(self, path):
-        pass
+        self.model.save_weights(path + '/' + self.get_name() +'.h5')
 
     def load(self, path):
-        pass
+        self.model.load_weights(path)
 
     def predict(self, data: np.ndarray, user_ids: np.array) -> np.ndarray:
         return self.model(user_ids).numpy()
 
     def get_name(self) -> str:
-        return "MatrixFactorization"
+        return "MatrixFactorization" + self.name
 
     def get_params(self) -> dict:
         param_names = ['latent_dim', 'epochs', 'batch_size', ]
