@@ -74,12 +74,13 @@ class BPR(BaseModel):
         nr_steps = nr_records // self.batch_size
         for i in range(self.epochs):
             step = 0
+            metric_mean = tf.keras.metrics.Mean()
             for data in dataset:
                 loss_value, grads = grad(self.model, data)
                 self.optimizer.apply_gradients(zip(grads, [self.model.U, self.model.P]))
-                # printProgressBar(step, nr_steps, 'Epoch {}, loss:  {:.3f}'.format(i, loss_value),length=80)
+                metric_mean.update_state(loss_value)
                 if step % 10 == 0:
-                    print("\rEpoch #{} Loss at step {}: {:.4f}".format(i, step, loss_value), end='\r')
+                    print("\rEpoch #{} Loss at step {}: {:.4f}".format(i, step, metric_mean.result()), end='\r')
                 step += 1
             print()
 

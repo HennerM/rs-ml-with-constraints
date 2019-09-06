@@ -49,7 +49,7 @@ class NeuralLogicRecAE(tf.keras.Model):
         self.constraint_weights = tf.convert_to_tensor([c.weight for c in self.constraints])
     
     @tf.function
-    def item_sim(self, items_a, items_b):
+    def item_sim(self, items_a, items_b, outputs):
         a = tf.nn.embedding_lookup(self.item_embedding, items_a)
         b = tf.nn.embedding_lookup(self.item_embedding, items_b)
         return sim(a, b)
@@ -79,6 +79,15 @@ class NeuralLogicRecAE(tf.keras.Model):
                 'rec': tf.squeeze(self.rec_estimator(input), axis=-1),
                 'popular': popular,
                  }
+    
+    @tf.function
+    def supervised_target_loss(self, target, fnn):
+        num_ratings = tf.reduce_sum(target['rated'])
+        num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
+        likes_loss =  tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['rated'])) / num_ratings
+        calc_popular = tf.reduce_mean(target['likes'], axis=0)
+        popular_loss = tf.keras.losses.mean_squared_error(fnn['popular'], calc_popular)
+        return likes_loss + popular_loss
 
 class NeuralLogicRecSimple(tf.keras.Model):
     def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers, nr_item_samples, constraints):
@@ -112,7 +121,7 @@ class NeuralLogicRecSimple(tf.keras.Model):
         self.constraint_weights = tf.convert_to_tensor([c.weight for c in self.constraints])
         
     @tf.function
-    def item_sim(self, items_a, items_b):
+    def item_sim(self, items_a, items_b, outputs):
         a = tf.nn.embedding_lookup(self.item_embedding, items_a)
         b = tf.nn.embedding_lookup(self.item_embedding, items_b)
         return sim(a, b)
@@ -140,7 +149,87 @@ class NeuralLogicRecSimple(tf.keras.Model):
                 'popular': popular,
                 'rec': tf.squeeze(self.rec_estimator(input), axis=-1)
                 }
+    
+    @tf.function
+    def supervised_target_loss(self, target, fnn):
+        num_ratings = tf.reduce_sum(target['rated'])
+        num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
+        likes_loss =  tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['rated'])) / num_ratings
+        calc_popular = tf.reduce_mean(target['likes'], axis=0)
+        popular_loss = tf.keras.losses.mean_squared_error(fnn['popular'], calc_popular)
+        return likes_loss + popular_loss
 
+class NeuralLogicRecAEV2(tf.keras.Model):
+    def __init__(self, nr_users, nr_items, embedding_dim, nr_hidden_layers, nr_item_samples, constraints):
+        super(tf.keras.Model, self).__init__()
+        self.embedding_dim = embedding_dim
+        
+        self.encoder = tf.keras.Sequential([
+            tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu'),
+            tf.keras.layers.Dense(units=embedding_dim, activation='relu')
+        ])
+        
+        
+        self.likes_estimator = tf.keras.Sequential([
+            tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu'),
+            tf.keras.layers.Dense(units=nr_items, activation='sigmoid')
+        ], name='likes_estimator')
+        
+        self.rec_estimator = tf.keras.Sequential([
+            tf.keras.layers.Dense(units=embedding_dim * 2, activation='relu'),
+            tf.keras.layers.Dense(units=nr_items, activation='sigmoid')
+        ], name='rec_estimator')
+
+#         self.popular_estimator = tf.keras.Sequential(
+#             [tf.keras.layers.Dense(units=16, activation='relu') for i in range(nr_hidden_layers)] + 
+#             [tf.keras.layers.Dense(units=1, activation='sigmoid')], name='popular_estimator')
+
+        self.nr_users = nr_users
+        self.nr_items = nr_items
+        self.nr_item_samples = nr_item_samples
+        self.set_constraints(constraints)
+    
+    def set_constraints(self, constraints):
+        self.constraints = constraints
+        self.constraint_weights = tf.convert_to_tensor([c.weight for c in self.constraints])
+    
+    @tf.function
+    def item_sim(self, items_a, items_b, output):
+        item_data = tf.transpose(output['likes'])
+        a = tf.nn.embedding_lookup(item_data, items_a)
+        b = tf.nn.embedding_lookup(item_data, items_b)
+        return sim(a, b)
+    
+    def predict(self, likes, users):
+        embed_user = self.encoder(likes)
+        return self.rec_estimator(embed_user)
+
+    def call(self, users, likes):
+        sample_likes = tf.math.less(tf.random.uniform(tf.shape(likes)), 0.3)
+        noisy_likes = tf.where(sample_likes, False, likes)
+        embed_user = self.encoder(noisy_likes)
+        
+#         embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
+#         expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
+#         embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
+#         input = tf.concat([embed_user_likes, embed_item], axis=-1)
+        
+        estimated_likes = self.likes_estimator(embed_user)
+        estimated_rec = self.rec_estimator(embed_user)
+        popular = tf.reduce_mean(likes, axis=0)
+
+        return {'likes': estimated_likes, 
+                'user_sim': calc_embedding_sim(embed_user, embed_user),
+                'rec': estimated_rec,
+                'popular': popular,
+        }
+    
+    @tf.function
+    def supervised_target_loss(self, target, fnn):
+        num_ratings = tf.reduce_sum(target['rated'])
+        num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
+        return tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['rated'])) / num_ratings
+    
 
 Constraint = namedtuple('Constraint', ['weight', 'formula'])
     
@@ -219,14 +308,15 @@ def user_cf(model, outputs):
 def item_cf(model, outputs):    
     likes = outputs['likes']
     rec = outputs['rec']
-    item_sample_a = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
-    item_sample_b = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
-    item_sim = model.item_sim(item_sample_a, item_sample_b)
+    item_sample_a = tf.range(0, model.nr_items)
+    item_sample_b = tf.random.shuffle(item_sample_a)
+    
+    item_sim = model.item_sim(item_sample_a, item_sample_b, outputs)
     sim = tf.maximum(0.0, item_sim)
     anti_sim = tf.abs(tf.minimum(0.0, item_sim))
-    likes_1_sample = tf.gather(likes, item_sample_a, axis=1)
+    likes_1_sample = likes
     likes_2_sample = tf.gather(likes, item_sample_b, axis=1)
-    rec_1 = tf.gather(rec, item_sample_a, axis=1)
+    rec_1 = rec
     rec_2 = tf.gather(rec, item_sample_b, axis=1)
     # (Likes(u, m1) & Sim(m1, m2) => Rec(u, m2)) & (Likes(u, m2) & Sim(m1, m2) => Rec(u, m1)
     a = Forall(And(
@@ -248,18 +338,19 @@ def item_cf(model, outputs):
 
 @tf.function
 def diversity_constraint(model, outputs):
-    rec = outputs['rec']
-    item_sample_a = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
-    item_sample_b = tf.random.uniform([model.nr_item_samples], minval=0, maxval=model.nr_items, dtype=tf.int32)
-    item_sim = model.item_sim(item_sample_a, item_sample_b)
+    rec = outputs['rec']    
+    item_sample_a = tf.range(0, model.nr_items)
+    item_sample_b = tf.random.shuffle(item_sample_a)
+    item_sim = model.item_sim(item_sample_a, item_sample_b, outputs)
     sim = tf.maximum(0.0, item_sim)
-#     anti_sim = tf.abs(tf.minimum(0.0, item_sim))
+    anti_sim = tf.abs(tf.minimum(0.0, item_sim))
     rec_1 = tf.gather(rec, item_sample_a, axis=1)
     rec_2 = tf.gather(rec, item_sample_b, axis=1)
     # sim(i1, i2) & i1 != i2 & rec(u, i1) => ~rec(u,i2)
     c_1 = Forall(Implies(And(And(sim, Not(IsEqual(sim))), rec_1), Not(rec_2)))
     # dissim(i1, i2) & rec(u, i1) => rec(u,i2)
-    return c_1
+    c_2 = Forall(Implies(And(anti_sim, rec_1), rec_2))
+    return And(c_1, c_2)
 
 @tf.function
 def constraint_satisfaction(model, outputs):   
@@ -275,18 +366,8 @@ def constraint_satisfaction(model, outputs):
 
     return combine_constraints(*rules)
 
-@tf.function
-def supervised_target_loss(target, fnn):
-    num_ratings = tf.reduce_sum(target['rated'])
-    num_ratings = tf.where(tf.equal(num_ratings, 0), 1.0, num_ratings)
-    likes_loss =  tf.math.square(tf.norm((target['likes'] - fnn['likes']) * target['rated'])) / num_ratings
-    calc_popular = tf.reduce_mean(fnn['likes'], axis=0)
-    popular_loss = tf.keras.losses.mean_squared_error(fnn['popular'], calc_popular)
-    return likes_loss + popular_loss
-
 def ltn_loss(model, target, fnn):
-    regularization = 0.0001 * tf.linalg.norm(model.item_embedding)
-    cost = regularization + supervised_target_loss(target, fnn) * 2
+    cost = model.supervised_target_loss(target, fnn) 
     cost += (tf.reduce_sum(model.constraint_weights * (1 - constraint_satisfaction(model, fnn))))
     return cost
 
@@ -318,6 +399,8 @@ class NLR(BaseModel):
 
         if self.mode == 'ae':
             self.model = NeuralLogicRecAE(num_users, num_items, self.embedding_dim, self.nr_hidden_layers, self.nr_item_samples, self.constraints)
+        elif self.mode == 'v2':
+            self.model = NeuralLogicRecAEV2(num_users, num_items, self.embedding_dim, self.nr_hidden_layers, self.nr_item_samples, self.constraints)
         else:
             self.model = NeuralLogicRecSimple(num_users, num_items, self.embedding_dim, self.nr_hidden_layers, self.nr_item_samples, self.constraints)
 
@@ -336,10 +419,15 @@ class NLR(BaseModel):
         dataset = dataset.batch(self.batch_size)
         history = list()
         for i in range(self.epochs):
-            
-            dataset = dataset.shuffle(512)
             step = 0
             epcoh_start = time.time()
+            
+            metric_mean = tf.keras.metrics.Mean()
+            train_precision_1 = tf.keras.metrics.Precision(top_k = 1)
+            eval_precision_1 = tf.keras.metrics.Precision(top_k = 1)
+            train_precision_5 = tf.keras.metrics.Precision(top_k = 5)
+            eval_precision_5 = tf.keras.metrics.Precision(top_k = 5)
+            
             for data in dataset:
                 users = data['user_id']
                 rated = tf.cast(data['x'], tf.float32)
@@ -348,18 +436,19 @@ class NLR(BaseModel):
                 loss_value, grads = train_dtn(self.model, users, rated, mask)
                 self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
                 diff = time.time() - epcoh_start
-                if step % 20 == 0:
+                
+                metric_mean.update_state(loss_value)
+                if step % 100 == 0:  
                     predictions = self.predict(rated, users)
-                    train_accuracy = Evaluation.tf_calculate_accuracy(predictions, data['x'], data['mask'])
-                    eval_x =  data['x_test']
-                    eval_mask = data['mask_test']
-                    eval_accuracy = Evaluation.tf_calculate_accuracy(predictions, eval_x, eval_mask)
-                    
-                    print("\rEpoch #{} Loss at step {}: {:.4f}, time: {:.3f}. Train accuracy {:.3f}, Validation accuracy {:.3f}"
-                          .format(i, step, tf.reduce_mean(loss_value).numpy(), diff, train_accuracy, eval_accuracy), end='\r')
+                    train_precision_1.update_state(data['x'], predictions)
+                    train_precision_5.update_state(data['x'], predictions)
+                    eval_precision_1.update_state(data['x_test'], predictions)
+                    eval_precision_5.update_state(data['x_test'], predictions)
+                    print("\rEpoch #{} Loss at step {}: {:.4f}, time: {:.3f}. Train P@1 {:.3f} P@5 {:.3f}, Eval P@1 {:.3f} P@5 {:.3f}"
+                           .format(i+1, step, metric_mean.result(), diff, train_precision_1.result(), train_precision_5.result(), eval_precision_1.result(), eval_precision_5.result()), end='\r')
                 else:
                     print("\rEpoch #{} Loss at step {}: {:.4f}, time: {:.3f}"
-                          .format(i, step, tf.reduce_mean(loss_value).numpy(), diff), end='\r')
+                          .format(i+1, step, metric_mean.result(), diff), end='\r')
                     
                 step += 1
                     

@@ -29,11 +29,11 @@ ml_small = {
     'feature_description': ml_feature,
     'train': {
         'records': 610,
-        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/train.tfrecords']
+        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/small_train.tfrecords']
     },
     'test': {
         'records': 610,
-        'filenames': '/home/ec2-user/SageMaker/data/MovieLens/test.tfrecords'
+        'filenames': '/home/ec2-user/SageMaker/data/MovieLens/small_test.tfrecords'
     },
     'item_features': '/home/ec2-user/SageMaker/data/MovieLens/movie_features.npz',
     'user': 610,
