@@ -389,8 +389,8 @@ class NLR(BaseModel):
         self.embedding_dim = kwargs.get('embedding_dim', 32)
         self.nr_hidden_layers = kwargs.get('nr_hidden_layers', 3)
         self.epochs = kwargs.get('epochs', 10)
-        self.batch_size = kwargs.get('batch_size', 48)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.0015)
+        self.batch_size = kwargs.get('batch_size', 24)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=0.0016)
         self.epochs_trained = 0
         self.nr_item_samples = kwargs.get('nr_item_samples', 4096)
         self.constraints = kwargs.get('constraints', [])
