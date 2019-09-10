@@ -14,7 +14,8 @@ movie_lens = {
     'feature_description': ml_feature,
     'train': {
         'records': 138493,
-        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/ml20m/train.tfrecords']
+        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/ml20m/train.tfrecords'],
+        'item_frequency': '/home/ec2-user/SageMaker/data/MovieLens/ml20m/train_popularity.npy'
     },
     'test': {
         'records': 610,
@@ -28,11 +29,12 @@ movie_lens = {
 ml_small = {
     'feature_description': ml_feature,
     'train': {
-        'records': 610,
-        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/small_train.tfrecords']
+        'records': 10_000,
+        'filenames': ['/home/ec2-user/SageMaker/data/MovieLens/small_train.tfrecords'],
+        'item_frequency': '/home/ec2-user/SageMaker/data/MovieLens/small_train_popularity.npy'
     },
     'test': {
-        'records': 610,
+        'records': 2000,
         'filenames': '/home/ec2-user/SageMaker/data/MovieLens/small_test.tfrecords'
     },
     'item_features': '/home/ec2-user/SageMaker/data/MovieLens/movie_features.npz',
@@ -49,6 +51,22 @@ msd = {
     'test': {
         'records': 117966,
         'filenames': ['/home/ec2-user/SageMaker/data/MSD/test.tfrecords']
+    },
+    'item_features': '/home/ec2-user/SageMaker/data/MSD/song_features.npz',
+    'user': 117966,
+    'dimensions': 6712,
+}
+
+msd_small = {
+    'feature_description': ml_feature,
+    'train': {
+        'records': 10000,
+        'filenames': ['/home/ec2-user/SageMaker/data/MSD/small_train.tfrecords'],
+        'item_frequency': '/home/ec2-user/SageMaker/data/MSD/small_train_popularity.npy'
+    },
+    'test': {
+        'records': 2000,
+        'filenames': ['/home/ec2-user/SageMaker/data/MSD/small_test.tfrecords']
     },
     'item_features': '/home/ec2-user/SageMaker/data/MSD/song_features.npz',
     'user': 117966,

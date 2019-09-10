@@ -208,20 +208,13 @@ class NeuralLogicRecAEV2(tf.keras.Model):
         sample_likes = tf.math.less(tf.random.uniform(tf.shape(likes)), 0.3)
         noisy_likes = tf.where(sample_likes, False, likes)
         embed_user = self.encoder(noisy_likes)
-        
-#         embed_user_likes = tf.tile(tf.expand_dims(embed_user, axis=1), [1, self.nr_items, 1])
-#         expanded_embed = tf.expand_dims(self.item_embedding, axis=0)
-#         embed_item = tf.tile(expanded_embed, [len(users), 1, 1])
-#         input = tf.concat([embed_user_likes, embed_item], axis=-1)
-        
+       
         estimated_likes = self.likes_estimator(embed_user)
         estimated_rec = self.rec_estimator(embed_user)
-        popular = tf.reduce_mean(likes, axis=0)
 
         return {'likes': estimated_likes, 
                 'user_sim': calc_embedding_sim(embed_user, embed_user),
-                'rec': estimated_rec,
-                'popular': popular,
+                'rec': estimated_rec
         }
     
     @tf.function
