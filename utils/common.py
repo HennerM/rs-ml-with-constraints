@@ -46,7 +46,8 @@ msd = {
     'feature_description': ml_feature,
     'train': {
         'records': 117966,
-        'filenames': ['/home/ec2-user/SageMaker/data/MSD/train.tfrecords']
+        'filenames': ['/home/ec2-user/SageMaker/data/MSD/train.tfrecords'],
+        'item_frequency': '/home/ec2-user/SageMaker/data/MSD/train_popularity.npy'
     },
     'test': {
         'records': 117966,
